@@ -1,5 +1,6 @@
 import { identity, readState, update } from "./db.js";
-import { uid, need, visible, manages, allowed, active } from "./access.js";
+import { audienceCatalog } from "./audience-catalog.js";
+import { uid, need, visible, manages, allowed, active, validRules, subset } from "./access.js";
 import { snapshot, change } from "./service.js";
 import { profiles } from "./seed.js";
 import { inspect, mimes } from "./files.js";
@@ -63,7 +64,30 @@ export async function api(req, env) {
         413,
         "附件须小于 8 MB",
       );
-      const file = (await req.formData()).get("file");
+      const form = await req.formData();
+      const file = form.get("file");
+      let permissions = {};
+      if (form.has("permissions")) {
+        let scope;
+        try { scope = JSON.parse(form.get("permissions")); } catch {}
+        need(scope && typeof scope.inherit === "boolean", 400, "上传权限格式无效");
+        let previous;
+        if (scope.draftId || scope.materialId) {
+          const { s } = await readState(env, ns);
+          previous = scope.draftId ? s.drafts.find((d) => d.id === scope.draftId)
+            : s.materials.find((m) => m.id === scope.materialId);
+          need(previous && manages(u, previous), 403, "无法使用此资料的权限");
+        }
+        const catalog = audienceCatalog(ctx);
+        const defV = validRules(scope.defaultView, catalog, previous?.defaultView);
+        const defD = validRules(scope.defaultDownload, catalog, previous?.defaultDownload);
+        need(subset(defD, defV), 400, "资料的下载范围超出查看范围");
+        const view = scope.inherit ? defV : validRules(scope.view, catalog, previous?.defaultView);
+        const download = scope.inherit ? defD : validRules(scope.download, catalog, previous?.defaultDownload);
+        need(subset(view, defV) && subset(download, defD), 400, "本次上传的附件权限超出资料默认范围");
+        need(subset(download, view), 400, "本次上传的下载范围超出查看范围");
+        permissions = { inherit: scope.inherit, view, download };
+      }
       need(
         file && typeof file.name === "string" && file.size <= 8388608,
         400,
@@ -113,11 +137,12 @@ export async function api(req, env) {
         preview: preview.text || "",
         mime: preview.mime,
         uploader: u.id,
+        ...permissions,
       };
       await update(env, ns, (s) => {
         (s.uploads || (s.uploads = {}))[id] = f;
       });
-      response = json({ id, name, ext, size: f.size });
+      response = json({ id, name, ext, size: f.size, ...permissions });
     } else if (req.method === "GET" && path === "/api/cover") {
       const { s } = await readState(env, ns);
       const m = s.materials.find((x) => x.id === url.searchParams.get("m"));

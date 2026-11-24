@@ -42,6 +42,7 @@ export default {
       view: "",
       form: blank(),
       tagText: "",
+      uploadScope: { inherit: true, view: [], download: [] },
       uploading: false,
       localError: "",
       review: null,
@@ -162,6 +163,7 @@ export default {
         b.title = r.title;
         b.summary = r.purpose;
       }
+      this.uploadScope = { inherit: true, view: [], download: [] };
       this.form = b;
       this.tagText = b.tags.join("，");
       this.view = "edit";
@@ -170,18 +172,22 @@ export default {
       this.localError = "";
       this.uploading = true;
       try {
+        const draft = this.form;
+        const scope = JSON.stringify({
+          inherit: this.uploadScope.inherit,
+          defaultView: draft.defaultView,
+          defaultDownload: draft.defaultDownload,
+          view: this.uploadScope.inherit ? draft.defaultView : this.uploadScope.view,
+          download: this.uploadScope.inherit ? draft.defaultDownload : this.uploadScope.download,
+          draftId: draft.id, materialId: draft.mid,
+        });
         for (const f of Array.from(e.target.files)) {
           const fd = new FormData();
           fd.append("file", f);
+          fd.append("permissions", scope);
           const obj = await call("upload", fd);
-          this.form.files.push({
-            ...obj,
-            inherit: true,
-            view: rules(),
-            download: rules(),
-            usage: "伙伴学习",
-          });
-          if (this.form.req) this.form.deliveryFiles.push(obj.id);
+          draft.files.push({ ...obj, usage: "伙伴学习" });
+          if (draft.req) draft.deliveryFiles.push(obj.id);
         }
       } catch (e) {
         this.localError = e.message;

@@ -239,6 +239,15 @@ test("released interface mounts and navigates the library, attachments, request 
   doc.querySelector(".studio-main .sec-head .btn").click();
   await wait(20);
   assert(doc.querySelector(".upload"));
+  const batchScope = doc.querySelector(".upload-scope");
+  assert(batchScope);
+  const inherit = batchScope.querySelector("input[type=checkbox]");
+  inherit.click();
+  await wait(5);
+  assert.equal(batchScope.querySelectorAll(".rule-editor").length,2);
+  inherit.click();
+  await wait(5);
+  assert.equal(batchScope.querySelectorAll(".rule-editor").length,0);
   const permissions = doc.querySelector(".audience-panel");
   assert(permissions && permissions.open);
   const country = permissions.querySelector(".scope-picker");
@@ -588,4 +597,39 @@ test("multi-select download coverage preserves country/type pairs across the uni
   assert(!subset(selection,view.slice(0,2)));
   assert(!subset([r("全部",["A"])],view));
   assert(subset(selection,[r(undefined,"全部")]));
+});
+
+test("upload saves each batch's permission rules and applies them after approval", async () => {
+  const h = harness();
+  await h.data(); await h.user("editor");
+  const th = { role:"伙伴", bg:"EBG", region:"东南亚", country:["TH"], channel:["经销"] };
+  const vn = { ...th, country:["VN"], channel:["集成"] };
+  const defaults = { defaultView:[th,vn], defaultDownload:[vn] };
+  async function upload(name, options, expected=200) {
+    const body = new FormData();
+    body.append("file",new Blob([name]),name+".txt");
+    body.append("permissions", JSON.stringify({...defaults,...options}));
+    const r = await h.get("/api/upload",body);
+    assert.equal(r.status,expected);
+    return r.json();
+  }
+  await upload("越权", {inherit:false,view:[th],download:[vn]},400);
+  await upload("扩大范围", {inherit:false,view:[{...th,region:"全部"}],download:[]},400);
+  const v = await upload("越南专享",{inherit:false,view:[vn],download:[vn]});
+  assert.deepEqual(v.view,[vn]); assert.deepEqual(v.download,[vn]);
+  const all = await upload("继承权限",{inherit:true});
+  assert.deepEqual(all.view,[th,vn]); assert.deepEqual(all.download,[vn]);
+  await h.act({op:"save",title:"分批授权",summary:"上传权限验证",type:"客户案例",cat:"园区网络",
+    ...defaults,files:[v,all].map((f)=>({...f,usage:"伙伴学习"})),submit:true});
+  const m=(await h.data()).admin.drafts[0];
+  const file=(f,download=false)=>"/api/file?m="+m.mid+"&f="+f.id+(download?"&mode=download":"");
+  await h.user("partnerVn");
+  assert.equal((await h.get(file(v))).status,404);
+  await h.user("reviewer"); await h.act({op:"review",id:m.id,approve:true});
+  await h.user("partner");
+  assert.equal((await h.get(file(v))).status,404);
+  assert.equal((await h.get(file(all))).status,200);
+  assert.equal((await h.get(file(all,true))).status,403);
+  await h.user("partnerVn");
+  assert.equal(await (await h.get(file(v,true))).text(),"越南专享");
 });
