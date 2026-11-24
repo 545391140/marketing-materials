@@ -38,6 +38,14 @@ export async function api(req, env) {
     if (req.method === "GET" && path === "/api/state") {
       const { s } = await readState(env, ns);
       response = json(snapshot(s, ctx));
+    } else if (req.method === "GET" && path === "/api/inbox") {
+      const { s } = await readState(env, ns);
+      const state = snapshot(s, ctx);
+      response = json({
+        userId: u.id,
+        notices: state.notices,
+        requests: state.requests,
+      });
     } else if (req.method === "POST" && path === "/api/profile") {
       need(ctx.demo, 403, "当前使用门户账号");
       const { id } = await req.json();
@@ -113,7 +121,7 @@ export async function api(req, env) {
     } else if (req.method === "GET" && path === "/api/cover") {
       const { s } = await readState(env, ns);
       const m = s.materials.find((x) => x.id === url.searchParams.get("m"));
-      need(m && visible(m, u) && m.coverId, 404, "封面不可用");
+      need(m && visible(m, u, s.materials) && m.coverId, 404, "封面不可用");
       const file = s.uploads?.[m.coverId];
       need(file?.previewKey, 404, "封面不可用");
       const o = await env.BUCKET.get(file.previewKey);
@@ -126,7 +134,11 @@ export async function api(req, env) {
         mode = url.searchParams.get("mode");
       const draft = url.searchParams.get("draft") === "1";
       const m = (draft ? s.drafts : s.materials).find((x) => x.id === mid);
-      need(m && (draft ? manages(u, m) : active(m)), 404, "资料不可用");
+      need(
+        m && (draft ? manages(u, m) : visible(m, u, s.materials)),
+        404,
+        "资料不可用",
+      );
       const f = m.files.find((x) => x.id === id);
       need(f && (draft || allowed(u, f.view)), 404, "资料不可用");
       if (mode === "download") {

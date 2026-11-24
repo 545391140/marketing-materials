@@ -1,4 +1,7 @@
 const en = {
+  反馈问题: "Report a problem",
+  请描述资料中的问题: "What needs to be corrected?",
+  查看引用依据: "View supporting evidence",
   资料发现: "Discover",
   资料库: "Library",
   场景包: "Field kits",

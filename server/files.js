@@ -1,3 +1,4 @@
+import cmaps from "partner:pdf-cmaps";
 import { unzipSync, strFromU8 } from "fflate";
 import { need } from "./access.js";
 import jpeg from "jpeg-js";
@@ -59,7 +60,20 @@ export async function inspect(bytes, ext) {
       422,
       "无效 PDF",
     );
-    const pdf = await getDocumentProxy(bytes.slice());
+    const pdf = await getDocumentProxy(bytes.slice(), {
+      useWorkerFetch: false,
+      cMapPacked: true,
+      BinaryDataFactory: class {
+        async fetch({ kind, filename }) {
+          if (
+            !["cMapUrl", "standardFontDataUrl"].includes(kind) ||
+            !Object.hasOwn(cmaps, filename)
+          )
+            throw Error("Unsupported PDF resource");
+          return Uint8Array.from(atob(cmaps[filename]), (c) => c.charCodeAt(0));
+        }
+      },
+    });
     try {
       need(pdf.numPages <= 180, 422, "请分拆超过 180 页的资料");
       const { text } = await extractText(pdf);

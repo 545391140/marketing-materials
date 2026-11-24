@@ -77,7 +77,9 @@ function expiryNotices(materials, p) {
 }
 export function snapshot(s, c) {
   const { u } = c,
-    materials = s.materials.map((m) => visible(m, u)).filter(Boolean),
+    materials = s.materials
+      .map((m) => visible(m, u, s.materials))
+      .filter(Boolean),
     ids = new Set(materials.map((m) => m.id)),
     p = prefs(s, u);
   const packs = s.packs
@@ -133,6 +135,12 @@ export function snapshot(s, c) {
         .filter((m) => manages(u, m))
         .map((m) => ({
           ...m,
+          proofNeedsReview:
+            !!m.proofId &&
+            !s.materials.some(
+              (p) =>
+                p.id === m.proofId && active(p) && p.version === m.proofVersion,
+            ),
           files: m.files.map(({ original, previewKey, preview, ...f }) => f),
         })),
       queue: s.requests.filter(
@@ -161,7 +169,7 @@ export async function change(s, c, env, a) {
     if (p[k].includes(a.id)) p[k] = p[k].filter((x) => x !== a.id);
     else {
       need(
-        s.materials.some((m) => m.id === a.id && visible(m, u)),
+        s.materials.some((m) => m.id === a.id && visible(m, u, s.materials)),
         404,
         "资料不可用",
       );
@@ -174,13 +182,13 @@ export async function change(s, c, env, a) {
     p.notes = str(a.notes, 2000);
     if (a.clean)
       p.list = p.list.filter((id) =>
-        s.materials.some((m) => m.id === id && visible(m, u)),
+        s.materials.some((m) => m.id === id && visible(m, u, s.materials)),
       );
     return;
   }
   if (op === "read") {
     const warnings = expiryNotices(
-      s.materials.map((m) => visible(m, u)).filter(Boolean),
+      s.materials.map((m) => visible(m, u, s.materials)).filter(Boolean),
       p,
     );
     p.readExpiry = [
@@ -195,7 +203,15 @@ export async function change(s, c, env, a) {
   }
   if (op === "request") {
     need(brief(a.title) && str(a.purpose), 400, "请说明需要什么资料和用途");
+    const subject = a.subjectId
+      ? s.materials.find(
+          (m) => m.id === a.subjectId && visible(m, u, s.materials),
+        )
+      : null;
+    if (a.subjectId) need(subject, 404, "资料不可用");
     const r = {
+      category: subject ? "资料纠错" : "资料需求",
+      subjectId: subject?.id || "",
       id: "RQ-" + uid().slice(0, 8),
       title: brief(a.title),
       purpose: str(a.purpose, 2000),
@@ -203,15 +219,15 @@ export async function change(s, c, env, a) {
       due: checkDate(a.due),
       external: !!a.external,
       needDownload: !!a.needDownload,
-      bg: u.grants[0]?.bg || "未分派",
+      bg: subject?.bg || u.grants[0]?.bg || "未分派",
       by: u.id,
       name: u.name,
-      owner: "",
+      owner: subject?.owner || "",
       status: "待受理",
       created: stamp(),
       history: [],
     };
-    note(s, r, u, "提交资料需求");
+    note(s, r, u, subject ? "问题已反馈给资料负责人" : "提交资料需求");
     s.requests.unshift(r);
     return;
   }
@@ -434,7 +450,18 @@ export async function change(s, c, env, a) {
     const assigned = a.req ? request(a.req) : null;
     if (assigned)
       need(!["已交付", "已关闭"].includes(assigned.status), 409, "需求已结束");
+    const proof = a.proofId
+      ? s.materials.find((x) => x.id === a.proofId)
+      : null;
+    if (a.proofId)
+      need(
+        proof && proof.id !== base?.id && visible(proof, u, s.materials),
+        400,
+        "选择有效且可引用的证据资料",
+      );
     const d = {
+      proofId: proof?.id || "",
+      proofVersion: proof?.version || 0,
       id: old?.id || uid(),
       mid: base?.id || old?.mid || uid(),
       baseVersion: old?.baseVersion ?? base?.version ?? 0,
@@ -519,6 +546,17 @@ export async function change(s, c, env, a) {
       log(s, u, "退回草稿", d.id);
       return;
     }
+    if (d.proofId)
+      need(
+        s.materials.some(
+          (x) =>
+            x.id === d.proofId &&
+            x.version === d.proofVersion &&
+            visible(x, u, s.materials),
+        ),
+        409,
+        "引用证据已有变化，请退回重新核实",
+      );
     const prev = s.materials.find((m) => m.id === d.mid);
     need(
       (prev?.version || 0) === d.baseVersion,

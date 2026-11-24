@@ -206,6 +206,14 @@ const app = new Vue({
     }
     window.addEventListener("hashchange", this.route);
     window.addEventListener("keydown", this.key);
+    this.inboxTimer = window.setInterval(this.pollInbox, 30000);
+    window.addEventListener("focus", this.pollInbox);
+  },
+  beforeDestroy() {
+    clearInterval(this.inboxTimer);
+    window.removeEventListener("focus", this.pollInbox);
+    window.removeEventListener("keydown", this.key);
+    window.removeEventListener("hashchange", this.route);
   },
   watch: {
     modal(v, old) {
@@ -229,6 +237,33 @@ const app = new Vue({
     },
     name(m) {
       return this.locale === "en" && m.en ? m.en : m.title;
+    },
+    async pollInbox() {
+      if (
+        !this.d ||
+        this.busy ||
+        this.pollingInbox ||
+        document.visibilityState === "hidden"
+      )
+        return;
+      this.pollingInbox = true;
+      const prev = this.d;
+      try {
+        const inbox = await call("inbox");
+        if (this.d !== prev || this.d.user.id !== inbox.userId) return;
+        const seen = new Set(this.d.notices.map((n) => n.key));
+        const fresh = inbox.notices.find((n) => !n.read && !seen.has(n.key));
+        store.commit("refresh", {
+          ...prev,
+          notices: inbox.notices,
+          requests: inbox.requests,
+        });
+        if (fresh) this.toast(fresh.msg);
+      } catch {
+        /* Keep the open form and retry at the next poll. */
+      } finally {
+        this.pollingInbox = false;
+      }
     },
     async refresh() {
       await store.dispatch("load");
@@ -347,6 +382,14 @@ const app = new Vue({
     requestForm() {
       this.form = initialForm();
       this.form.title = this.query;
+      this.modal = "request";
+    },
+    reportMaterial(m) {
+      this.form = {
+        ...initialForm(),
+        title: "资料纠错 · " + m.title,
+        subjectId: m.id,
+      };
       this.modal = "request";
     },
     async submitReq() {

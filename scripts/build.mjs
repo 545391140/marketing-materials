@@ -41,6 +41,34 @@ try {
     target: "es2022",
     platform: "browser",
     conditions: ["workerd", "browser"],
+    plugins: [
+      {
+        name: "offline-pdf-cmaps",
+        setup(build) {
+          build.onResolve({ filter: /^partner:pdf-cmaps$/ }, () => ({
+            path: "maps",
+            namespace: "pdf-maps",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "pdf-maps" }, async () => {
+            const dir = "node_modules/pdfjs-dist/cmaps";
+            const maps = {};
+            for (const name of await fs.readdir(dir)) {
+              if (name.endsWith(".bcmap"))
+                maps[name] = (await fs.readFile(path.join(dir, name))).toString(
+                  "base64",
+                );
+            }
+            const fonts = "node_modules/pdfjs-dist/standard_fonts";
+            for (const name of await fs.readdir(fonts))
+              if (/\.(ttf|pfb)$/.test(name))
+                maps[name] = (
+                  await fs.readFile(path.join(fonts, name))
+                ).toString("base64");
+            return { loader: "json", contents: JSON.stringify(maps) };
+          });
+        },
+      },
+    ],
     external: ["node:*"],
     define: { "process.env.NODE_ENV": '"production"' },
   });

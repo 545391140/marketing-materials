@@ -27,8 +27,17 @@ export function allowed(u, rules) {
       ),
   );
 }
-export function visible(m, u) {
-  if (!active(m)) return null;
+export function visible(m, u, catalog = [], visited = new Set()) {
+  if (!active(m) || visited.has(m.id)) return null;
+  if (m.proofId) {
+    const proof = catalog.find((x) => x.id === m.proofId);
+    if (
+      !proof ||
+      proof.version !== m.proofVersion ||
+      !visible(proof, u, catalog, new Set([...visited, m.id]))
+    )
+      return null;
+  }
   const files = m.files
     .filter((f) => allowed(u, f.view))
     .map((f) => ({
@@ -99,6 +108,7 @@ export function deliver(s, r, m, u, fileIds) {
     return false;
   if (
     !u ||
+    !visible(m, u, s.materials) ||
     !f.every(
       (a) =>
         allowed(u, a.view) &&

@@ -16,6 +16,7 @@ const blank = () => ({
   opening: "",
   advice: "",
   evidence: "",
+  proofId: "",
   support: "",
   expires: "",
   defaultView: rules(),

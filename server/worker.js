@@ -1,14 +1,32 @@
 import assets from "./built-assets.json";
 import { api } from "./api.js";
+import { sendPortalNotifications } from "./portal-notifications.js";
 export default {
-  async fetch(req, env) {
+  scheduled(event, env, ctx) {
+    ctx.waitUntil(sendPortalNotifications(env));
+  },
+  async fetch(req, env, ctx) {
     const path = new URL(req.url).pathname;
-    if (path.startsWith("/api/"))
-      return api(req, {
+    if (path.startsWith("/api/")) {
+      const result = await api(req, {
         ...env,
         BUCKET: env.BUCKET,
         DEMO_MODE: env.DEMO_MODE ?? "true",
       });
+      if (
+        result.ok &&
+        env.PC_SESSION_URL &&
+        env.PC_MESSAGE_URL &&
+        (req.method === "POST" || path === "/api/inbox")
+      ) {
+        const delivery = sendPortalNotifications(env).catch(() =>
+          console.error("Portal notification dispatch deferred"),
+        );
+        if (ctx?.waitUntil) ctx.waitUntil(delivery);
+        else await delivery;
+      }
+      return result;
+    }
     const a = assets[path === "/" ? "/index.html" : path];
     if (!a) return new Response("Not found", { status: 404 });
     return new Response(

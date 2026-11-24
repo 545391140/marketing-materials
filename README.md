@@ -40,7 +40,7 @@ npm start
 | `PC_SESSION_URL`、`PC_COOKIE_NAME` | 后端将门户会话令牌送往受信任的 HTTPS 校验服务。返回当前用户的 `id/name/role/org/active/grants`；角色为 partner、sales、editor 或 reviewer；每一组 grants 包含 bg、region 和 channel。每次业务请求重新校验。 |
 | `PC_DIRECTORY_URL`、`PC_SERVICE_TOKEN` | 交付离线用户前按 ID 查询其当前有效身份和归属。无可靠结果时保留待交付。 |
 | `SCAN_URL`、`SCAN_TOKEN` | 附件以二进制 POST 至可信扫描服务，仅在返回成功且 JSON 为 `{"clean":true}` 后保存。 |
-| 门户菜单、语言、消息 | 从门户菜单接入，支持 `?lang=zh` 或 `?lang=en`。本应用内消息可用；同步到锐捷现网统一消息中心需取得消息协议后联调。 |
+| 门户菜单、语言、消息 | 从门户菜单接入，支持 `?lang=zh` 或 `?lang=en`。本应用内消息可用；前台在窗口获得焦点时及每 30 秒检查新消息。配置 PC_MESSAGE_URL 后，通过 HTTPS POST 向门户消息适配器交付待发通知；接收方以 Idempotency-Key 去重，返回 2xx 表示已持久接收。请求或定时触发会重试失败消息，无人访问时应由部署平台配置定时触发器。真实消息协议需由门户方映射并联调。 |
 
 在集成环境核对门户登录与停用、单点退出、语言、管理角色、文件存储及通知，并用真实授权矩阵抽验后再导入业务资料。试点在打开消息时显示已收藏或列入清单的资料在未来 30 天内的到期提醒。
 
@@ -49,3 +49,5 @@ npm start
 `npm test` 会构建实际发布包，测试跨角色数据隔离、直接请求附件的服务端鉴权、禁止自审、资料交付通知、关联现有资料、撤回与权限失效，以及前端页面挂载和主要交互。生产版与本地启动均使用同一构建出的 Worker。
 
 [项目建设方案](营销资料平台建设方案.md)
+
+可运行 `npm run test:worker` 在 workerd 与本地 R2 模拟存储中单独验证一次资料需求交付。[一期验收记录](docs/一期验收.md)

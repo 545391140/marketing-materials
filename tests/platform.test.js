@@ -242,3 +242,259 @@ test("released interface mounts and navigates the library, attachments, request 
   assert.deepEqual(errs, []);
   dom.window.close();
 });
+
+test("Chinese PDF, Office, image and text originals generate controlled previews", async () => {
+  const { zipSync, strToU8 } = await import("fflate");
+  const { encode: png } = await import("fast-png");
+  const { default: jpeg } = await import("jpeg-js");
+  const pdfs = JSON.parse(
+    await fs.readFile(
+      new URL("../server/sample-pdf.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const rgba = {
+    data: Uint8Array.from([255, 128, 0, 255]),
+    width: 1,
+    height: 1,
+  };
+  const inputs = [
+    ["PDF.pdf", Buffer.from(pdfs["campus-main"], "base64"), "智慧园区"],
+    [
+      "提纲.docx",
+      zipSync({
+        "word/document.xml": strToU8(
+          "<w:p><w:r><w:t>拜访提纲</w:t></w:r></w:p>",
+        ),
+      }),
+      "拜访提纲",
+    ],
+    [
+      "演示.pptx",
+      zipSync({
+        "ppt/slides/slide1.xml": strToU8(
+          "<a:p><a:r><a:t>客户演示</a:t></a:r></a:p>",
+        ),
+      }),
+      "客户演示",
+    ],
+    ["说明.txt", Buffer.from("首访提纲"), "首访提纲"],
+    ["图片.png", png({ ...rgba, channels: 4 }), "image/png"],
+    ["封面.jpg", jpeg.encode(rgba, 90).data, "image/jpeg"],
+  ];
+  const h = harness();
+  await h.data();
+  await h.user("editor");
+  const files = [];
+  for (const [name, bytes] of inputs) {
+    const fd = new FormData();
+    fd.append("file", new Blob([bytes]), name);
+    const r = await h.get("/api/upload", fd);
+    const v = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(v));
+    files.push({ ...v, inherit: true, usage: "可发客户" });
+  }
+  const rules = [{ role: "全部", bg: "EBG", region: "全部", channel: "全部" }];
+  await h.act({
+    op: "save",
+    title: "附件验证",
+    type: "客户案例",
+    cat: "园区网络",
+    summary: "预览",
+    defaultView: rules,
+    defaultDownload: [],
+    files,
+    submit: true,
+  });
+  const m = (await h.data()).admin.drafts[0];
+  for (const [i, f] of files.entries()) {
+    const r = await h.get("/api/file?draft=1&m=" + m.id + "&f=" + f.id);
+    assert.equal(r.status, 200);
+    if (i >= 4) {
+      assert.equal(r.headers.get("content-type"), inputs[i][2]);
+      assert((await r.arrayBuffer()).byteLength > 0);
+    } else assert((await r.json()).text.includes(inputs[i][2]), f.name);
+  }
+});
+
+test("update remains private until independent review; deadline and click-through stay current", async () => {
+  const h = harness();
+  const initial = await h.data();
+  const base = initial.materials.find((m) => m.id === "retail");
+  await h.act({ op: "fav", id: base.id });
+  await h.act({ op: "list", id: base.id });
+  const due = new Date(Date.now() + 8 * 86400000).toISOString().slice(0, 10);
+  const expires = new Date(Date.now() + 3 * 86400000)
+    .toISOString()
+    .slice(0, 10);
+  await h.act({ op: "checklist", deadline: due, notes: "检查资料有效期" });
+  await h.user("reviewer");
+  await h.act({
+    op: "library",
+    kind: "type",
+    name: "经营指南",
+    fields: ["适用主体"],
+  });
+  await h.user("editor");
+  const source = (await h.data()).admin.published.find((m) => m.id === base.id);
+  await h.act({
+    ...source,
+    id: "",
+    mid: source.id,
+    op: "save",
+    type: "经营指南",
+    fields: { 适用主体: "试点伙伴" },
+    title: "门店拜访新版",
+    expires,
+    submit: true,
+  });
+  const draft = (await h.data()).admin.drafts[0];
+  await h.user("partner");
+  assert.equal(
+    (await h.data()).materials.find((m) => m.id === base.id).title,
+    base.title,
+  );
+  await h.user("reviewer");
+  await h.act({ op: "review", id: draft.id, approve: true });
+  await h.user("partner");
+  const d = await h.data(),
+    latest = d.materials.find((m) => m.id === base.id);
+  assert.equal(latest.version, 2);
+  assert.equal(latest.fields["适用主体"], "试点伙伴");
+  assert(latest.expires < d.prefs.deadline);
+  const inbox = await (await h.get("/api/inbox")).json();
+  assert(inbox.notices.some((n) => n.msg.includes("即将到期")));
+  await h.act({ op: "read" });
+  assert((await h.data()).notices.every((n) => n.read));
+});
+
+test("scene kits go through independent review and hide inaccessible references", async () => {
+  const h = harness();
+  await h.data();
+  await h.user("editor");
+  await h.act({
+    op: "savePack",
+    title: "试点拜访包",
+    intro: "适合首次见面",
+    steps: ["先确认客户场景"],
+    refs: ["internal", "campus"],
+    img: "hero",
+  });
+  const pending = (await h.data()).admin.packDrafts[0];
+  await h.act({ op: "packReview", id: pending.id, approve: true }, 403);
+  await h.user("reviewer");
+  await h.act({ op: "packReview", id: pending.id, approve: true });
+  await h.user("partner");
+  assert.deepEqual(
+    (await h.data()).packs.find((k) => k.title === "试点拜访包").refs,
+    ["campus"],
+  );
+});
+
+test("portal message adapter retries failures with one stable delivery key", async () => {
+  const { sendPortalNotifications } = await import(
+    "../server/portal-notifications.js"
+  );
+  const env = {
+    ...backend(),
+    PC_SESSION_URL: "https://example.invalid/session",
+    PC_MESSAGE_URL: "https://example.invalid/messages",
+    PC_SERVICE_TOKEN: "test-only",
+  };
+  await env.BUCKET.put(
+    "state/portal",
+    JSON.stringify({
+      notices: [
+        { to: "test", key: "delivery-1", msg: "资料已发布", rid: "RQ-1" },
+      ],
+    }),
+  );
+  const attempts = [];
+  const send = async (url, opts) => {
+    attempts.push(opts.headers["idempotency-key"]);
+    return new Response(null, { status: attempts.length === 1 ? 503 : 204 });
+  };
+  for (const t of [1000, 2000, 32000, 64000])
+    await sendPortalNotifications(env, send, t);
+  assert.deepEqual(attempts, ["delivery-1", "delivery-1"]);
+  const state = JSON.parse(await (await env.BUCKET.get("state/portal")).text());
+  assert.equal(state.notices[0].portalSent, true);
+});
+
+test("content feedback routes to its owner; withdrawing referenced evidence removes dependent downloads and cards", async () => {
+  const h = harness();
+  await h.data();
+  await h.act({
+    op: "request",
+    title: "资料纠错",
+    purpose: "需要核实适用型号",
+    subjectId: "campus",
+  });
+  await h.user("editor");
+  const before = (await h.data()).admin;
+  const issue = before.queue[0];
+  assert.equal(issue.category, "资料纠错");
+  assert.equal(
+    issue.owner,
+    before.published.find((x) => x.id === "campus").owner,
+  );
+  const source = before.published.find((x) => x.id === "retail");
+  await h.act({
+    ...source,
+    id: "",
+    mid: source.id,
+    op: "save",
+    proofId: "campus",
+    submit: true,
+  });
+  await h.user("reviewer");
+  const draft = (await h.data()).admin.drafts[0];
+  await h.act({ op: "review", id: draft.id, approve: true });
+  await h.user("partner");
+  assert((await h.data()).materials.some((x) => x.id === "retail"));
+  await h.user("editor");
+  await h.act({ op: "withdraw", id: "campus", comment: "证据需重新核实" });
+  assert.equal(
+    (await h.data()).admin.published.find((x) => x.id === "retail")
+      .proofNeedsReview,
+    true,
+  );
+  await h.user("partner");
+  assert(!(await h.data()).materials.some((x) => x.id === "retail"));
+  assert.equal(
+    (await h.get("/api/file?m=retail&f=retail-main&mode=download")).status,
+    404,
+  );
+});
+
+test("production portal contract: active grants and scan decisions govern identity and uploads", async (t) => {
+  const { profiles } = await import("../server/seed.js");
+  let current = profiles.editor,
+    clean = false;
+  const fetchStub = t.mock.method(globalThis, "fetch", async (url, opts) => {
+    if (String(url) === "https://test.invalid/session") {
+      assert.equal(opts.headers.Authorization, "Bearer test-session");
+      return Response.json({ ...current, active: current.active !== false });
+    }
+    if (String(url) === "https://test.invalid/scan")
+      return Response.json({ clean });
+    throw Error("Unexpected outbound call");
+  });
+  const h = harness({
+    ...backend(),
+    DEMO_MODE: "false",
+    PC_SESSION_URL: "https://test.invalid/session",
+    SCAN_URL: "https://test.invalid/scan",
+  });
+  h.jar.set("pc_session", "test-session");
+  assert.equal((await h.data()).demo, false);
+  assert.equal((await h.get("/api/profile", { id: "reviewer" })).status, 403);
+  const fd = new FormData();
+  fd.append("file", new Blob(["测试资料"]), "验证.txt");
+  assert.equal((await h.get("/api/upload", fd)).status, 422);
+  clean = true;
+  assert.equal((await h.get("/api/upload", fd)).status, 200);
+  current = { ...profiles.editor, active: false };
+  assert.equal((await h.get("/api/state")).status, 401);
+  fetchStub.mock.restore();
+});
