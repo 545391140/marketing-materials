@@ -19,6 +19,7 @@
   "dependencies": {
     "fast-png": "^8.0.0",
     "fflate": "^0.8.3",
+    "fzstd": "0.1.1",
     "jpeg-js": "^0.4.4",
     "lucide-vue": "^0.468.0",
     "unpdf": "^2.2.2",

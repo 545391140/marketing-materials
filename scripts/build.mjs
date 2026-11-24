@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
+import { constants, gzipSync, zstdCompressSync } from "node:zlib";
 await fs.rm("dist", { recursive: true, force: true });
 await fs.mkdir("dist/server", { recursive: true });
 await fs.mkdir("dist/.openai", { recursive: true });
@@ -66,7 +66,9 @@ try {
                 offset += bytes.length;
               }
             }
-            const data = gzipSync(Buffer.concat(chunks), { level: 9 }).toString("base64");
+            const data = zstdCompressSync(Buffer.concat(chunks), {
+              params: { [constants.ZSTD_c_compressionLevel]: 19 },
+            }).toString("base64");
             return { loader: "json", contents: JSON.stringify({ index, data }) };
           });
         },

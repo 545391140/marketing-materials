@@ -1,12 +1,13 @@
+import { decompress } from "fzstd";
 import cmaps from "partner:pdf-cmaps";
-import { unzipSync, gunzipSync, strFromU8 } from "fflate";
+import { unzipSync, strFromU8 } from "fflate";
 import { need } from "./access.js";
 import jpeg from "jpeg-js";
 import { decode, encode } from "fast-png";
 import { extractText, getDocumentProxy } from "unpdf";
 let pdfResources;
 function readPdfResource(filename) {
-  pdfResources ??= gunzipSync(
+  pdfResources ??= decompress(
     Uint8Array.from(atob(cmaps.data), (c) => c.charCodeAt(0)),
   );
   const [offset, length] = cmaps.index[filename];
