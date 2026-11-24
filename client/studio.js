@@ -1,4 +1,6 @@
 import { rules, call, date, tasks } from "./shared.js";
+import { ruleEditor, reviewScope } from "./audience.js";
+import { allowed } from "../shared/audience.js";
 import template from "./studio.html";
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const blank = () => ({
@@ -26,28 +28,13 @@ const blank = () => ({
   req: "",
   deliveryFiles: [],
 });
-const ruleEditor = {
-  props: ["value"],
-  methods: {
-    add() {
-      this.$emit("input", [...this.value, ...rules()]);
-    },
-    rm(i) {
-      this.$emit(
-        "input",
-        this.value.filter((_, j) => j !== i),
-      );
-    },
-  },
-  template: `<div class="rule-editor"><div class="rule-line" v-for="(r,i) in value"><select aria-label="身份" v-model="r.role"><option v-for="s in ['全部','员工','伙伴']">{{s}}</option></select><input v-for="k in ['bg','region','channel']" v-model.trim="r[k]" :aria-label="k" :placeholder="k"><button type="button" class="icon-btn" @click="rm(i)" title="移除范围"><ic n="Minus" :size="14"/></button></div><button type="button" class="text-btn" @click="add"><ic n="Plus" :size="14"/>添加范围</button></div>`,
-};
 export default {
   template,
   props: ["d", "busy"],
-  components: { ruleEditor },
+  components: { ruleEditor, reviewScope },
   data() {
     return {
-      sim: { role: "伙伴", bg: "EBG", region: "华东", channel: "经销" },
+      sim: { role: "伙伴", bg: "EBG", region: "东南亚", country: "TH", channel: "经销" },
       section: "资料管理",
       filter: "",
       q: "",
@@ -82,6 +69,14 @@ export default {
   computed: {
     a() {
       return this.d.admin;
+    },
+    previousMaterial() {
+      return this.review && this.a.published.find((m) => m.id === this.review.mid);
+    },
+    removedFiles() {
+      if (!this.previousMaterial) return [];
+      const current = new Set(this.review.files.map((f) => f.id));
+      return this.previousMaterial.files.filter((f) => !current.has(f.id));
     },
     isRev() {
       return this.d.user.role === "reviewer";
@@ -214,17 +209,21 @@ export default {
     simulate(f) {
       const a = this.sim;
       const role = a.role === "伙伴" ? "partner" : "sales";
-      const match = (rs) =>
-        (rs || []).some(
-          (r) =>
-            (r.role === "全部" || r.role === a.role || r.role === role) &&
-            ["bg", "region", "channel"].every(
-              (k) => r[k] === "全部" || r[k] === a[k],
-            ),
-        );
+      const match = (rs) => allowed({role, grants: [a]}, rs);
       const v = f.inherit ? this.form.defaultView : f.view,
         d = f.inherit ? this.form.defaultDownload : f.download;
       return match(v) ? (match(d) ? "可查看及下载" : "仅可预览") : "完全隐藏";
+    },
+    setInherit(f, checked) {
+      if (!checked) {
+        f.view = clone(this.form.defaultView);
+        f.download = clone(this.form.defaultDownload);
+      }
+      f.inherit = checked;
+    },
+    oldScope(id, key) {
+      if (!this.previousMaterial) return undefined;
+      return this.previousMaterial.files.find((f) => f.id === id)?.[key] || [];
     },
     async save(submit) {
       this.form.tags = this.tagText

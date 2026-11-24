@@ -13,6 +13,7 @@ import {
   prefs,
   deliver,
 } from "./access.js";
+import { audienceCatalog } from "./audience-catalog.js";
 import { profiles, taskNames } from "./seed.js";
 import { recipient } from "./db.js";
 const stamp = () => new Date().toISOString();
@@ -130,6 +131,7 @@ export function snapshot(s, c) {
   };
   if (staff(u)) {
     out.admin = {
+      audienceCatalog: audienceCatalog(c),
       drafts: s.drafts.filter((m) => manages(u, m)),
       published: s.materials
         .filter((m) => manages(u, m))
@@ -238,7 +240,7 @@ export async function change(s, c, env, a) {
     note(s, r, u, str(a.comment, 1500));
     return;
   }
-  need(staff(u), 403, "仅授权维护人员可访问");
+  need(staff(u) && u.grants.length, 403, "仅授权维护人员可访问");
   const request = (id) => {
     const r = s.requests.find((r) => r.id === id);
     need(
@@ -402,8 +404,10 @@ export async function change(s, c, env, a) {
       400,
       "请选择有效分类和类型",
     );
-    const defV = validRules(a.defaultView),
-      defD = validRules(a.defaultDownload);
+    const catalog = audienceCatalog(c);
+    const previous = old || base;
+    const defV = validRules(a.defaultView, catalog, previous?.defaultView),
+      defD = validRules(a.defaultDownload, catalog, previous?.defaultDownload);
     need(subset(defD, defV), 400, "下载范围须包含在查看范围内");
     need(
       brief(a.title) &&
@@ -422,8 +426,10 @@ export async function change(s, c, env, a) {
     const files = a.files.map((f) => {
       const src = sources.find((x) => x.id === f.id);
       need(src, 400, "附件不在当前草稿中");
-      const v = f.inherit ? defV : validRules(f.view),
-        d = f.inherit ? defD : validRules(f.download);
+      const v = f.inherit ? defV : validRules(f.view, catalog, src.view),
+        d = f.inherit ? defD : validRules(f.download, catalog, src.download);
+      if (!f.inherit)
+        need(subset(v, defV) && subset(d, defD), 400, "附件权限不能超出资料默认范围");
       need(
         subset(d, v) &&
           ["仅内部", "伙伴学习", "可发客户", "内部学习"].includes(f.usage),

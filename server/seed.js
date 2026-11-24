@@ -5,7 +5,14 @@ export const profiles = {
     en: "Yue Lin",
     role: "partner",
     org: "星河科技 · 渠道伙伴",
-    grants: [{ bg: "EBG", region: "华东", channel: "经销" }],
+    grants: [
+      { bg: "EBG", region: "华东", country: "CN", channel: "经销" },
+      { bg: "EBG", region: "东南亚", country: "TH", channel: "经销" },
+    ],
+  },
+  partnerVn: {
+    id: "partnerVn", name: "越南集成商", en: "Vietnam Integrator", role: "partner",
+    org: "演示伙伴 · 越南", grants: [{bg: "EBG", region: "东南亚", country: "VN", channel: "集成"}],
   },
   sales: {
     id: "sales",

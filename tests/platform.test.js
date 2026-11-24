@@ -239,6 +239,38 @@ test("released interface mounts and navigates the library, attachments, request 
   doc.querySelector(".studio-main .sec-head .btn").click();
   await wait(20);
   assert(doc.querySelector(".upload"));
+  const permissions = doc.querySelector(".audience-panel");
+  assert(permissions && permissions.open);
+  const country = permissions.querySelector(".scope-picker");
+  country.open = true;
+  await wait(15);
+  const th = [...country.querySelectorAll("label")].find((el) => el.textContent.includes("泰国"));
+  assert(th);
+  th.querySelector("input").click();
+  await wait(5);
+  assert.equal(country.querySelector("summary").textContent.trim(),"泰国");
+  const add = [...permissions.querySelectorAll("button")].find((b) => b.textContent.includes("添加授权组"));
+  add.click();
+  await wait(5);
+  assert.equal(permissions.querySelectorAll("fieldset").length,3);
+  const studio = doc.querySelector(".studio").__vue__;
+  const base = studio.a.published.find((m) => m.id === "retail");
+  studio.edit(base);
+  const audience = [{role:"伙伴",bg:"EBG",region:"东南亚",country:["TH"],channel:["经销"]}];
+  studio.form.defaultView = audience;
+  studio.form.defaultDownload = [];
+  studio.setInherit(studio.form.files[0], true);
+  await studio.save(true);
+  await root.profile("reviewer");
+  await wait(40);
+  const reviewStudio = doc.querySelector(".studio").__vue__;
+  const draft = reviewStudio.a.drafts.find((d) => d.mid === base.id);
+  assert(draft);
+  reviewStudio.inspect(draft);
+  await wait(5);
+  const scopeText = doc.querySelector(".review-scope").textContent;
+  assert.match(scopeText,/新增授权组.*国家 泰国 · 伙伴类型 经销商/);
+  assert.match(scopeText,/移除授权组.*国家 全部/);
   assert.deepEqual(errs, []);
   dom.window.close();
 });
@@ -497,4 +529,63 @@ test("production portal contract: active grants and scan decisions govern identi
   current = { ...profiles.editor, active: false };
   assert.equal((await h.get("/api/state")).status, 401);
   fetchStub.mock.restore();
+});
+
+test("country and partner-type groups enforce revisions, attachment limits and live portal contracts", async (t) => {
+  const { profiles } = await import("../server/seed.js");
+  const audienceCatalog = {
+    countries: [{value:"TH",label:"泰国"},{value:"VN",label:"越南"}],
+    partnerTypes: [{value:"reseller",label:"经销商"},{value:"si",label:"系统集成商"}],
+  };
+  let current = { ...profiles.editor, audienceCatalog };
+  t.mock.method(globalThis, "fetch", async () => Response.json(current));
+  const h = harness({ ...backend(), PC_SESSION_URL:"https://pc.invalid/session" });
+  h.jar.set("pc_session", "test");
+  const state = await h.data();
+  assert.deepEqual(state.admin.audienceCatalog, audienceCatalog);
+  const mat = state.admin.published.find((m) => m.id === "retail");
+  const rule = (country,channel) => ({role:"伙伴",bg:"EBG",region:"东南亚",country,channel});
+  const th = rule(["TH"],["reseller"]), vn = rule(["VN"],["si"]);
+  const draft = {...mat, op:"save", id:"", mid:mat.id, defaultView:[th,vn], defaultDownload:[vn],
+    files:mat.files.map((f) => ({...f, inherit:true})), submit:true};
+  const preview = "/api/file?m=retail&f=retail-main";
+  const download = preview + "&mode=download";
+  await h.act({...draft, defaultDownload:[rule(["TH","VN"],["si"])]},400);
+  await h.act({...draft, defaultView:[rule(["ZZ"],"全部")], defaultDownload:[]},400);
+  await h.act({...draft, defaultView:[rule(["TH"],["invented"])], defaultDownload:[]},400);
+  await h.act({...draft, files:[{...draft.files[0],inherit:false,view:[th],download:[th]}]},400);
+  await h.act(draft);
+  const pending = (await h.data()).admin.drafts[0];
+  const grant = (country,channel,active = true) => ({bg:"EBG",region:"东南亚",country,channel,active});
+  const asPartner = (...grants) => { current = { ...profiles.partner, grants }; };
+  asPartner(grant("TH","si"),grant("VN","reseller"));
+  assert.equal((await h.get(download)).status,200, "old published rules are still effective");
+  current = {...profiles.reviewer,audienceCatalog};
+  await h.act({op:"review",id:pending.id,approve:true});
+  asPartner(grant("th","reseller"));
+  assert.equal((await h.get(preview)).status,200);
+  assert.equal((await h.get(download)).status,403);
+  await h.act({op:"fav",id:"retail"});
+  asPartner(grant("VN","si"));
+  assert.equal((await h.get(download)).status,200);
+  asPartner(grant("TH","si"),grant("VN","reseller"),grant("VN","si",false));
+  const hidden = await h.data();
+  assert(!hidden.materials.some((m)=>m.id==="retail"));
+  assert(!hidden.packs.some((k)=>k.refs.includes("retail")));
+  assert(!hidden.prefs.fav.includes("retail"));
+  assert.equal((await h.get(preview)).status,404);
+  assert.equal((await h.get(download)).status,404);
+  asPartner(grant(undefined,"si"));
+  assert.equal((await h.get(preview)).status,404);
+});
+
+test("multi-select download coverage preserves country/type pairs across the union", async () => {
+  const { subset } = await import("../shared/audience.js");
+  const r = (country, channel) => ({role:"伙伴",bg:"EBG",region:"全部",country,channel});
+  const selection = [r(["TH","VN"],["A","B"])];
+  const view = [r(["TH"],["A","B"]),r(["VN"],["A"]),r(["VN"],["B"])];
+  assert(subset(selection,view));
+  assert(!subset(selection,view.slice(0,2)));
+  assert(!subset([r("全部",["A"])],view));
+  assert(subset(selection,[r(undefined,"全部")]));
 });

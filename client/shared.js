@@ -127,7 +127,7 @@ Vue.component("ic", {
   },
 });
 export const rules = () => [
-  { role: "全部", bg: "EBG", region: "全部", channel: "全部" },
+  { role: "全部", bg: "EBG", region: "全部", country: "全部", channel: "全部" },
 ];
 export const date = (s) => (s || "").slice(0, 10).replaceAll("-", ".");
 export function fileUrl(m, f, mode = "preview", draft = false) {

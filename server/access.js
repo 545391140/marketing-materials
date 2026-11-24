@@ -1,3 +1,5 @@
+import { allowed, ALL, roles, values } from "../shared/audience.js";
+export { allowed, subset } from "../shared/audience.js";
 export class HttpError extends Error {
   constructor(status, msg) {
     super(msg);
@@ -13,20 +15,6 @@ export const active = (m) => m.published && (!m.expires || m.expires >= day());
 export const staff = (u) => u.role === "editor" || u.role === "reviewer";
 export const manages = (u, m) =>
   staff(u) && u.grants.some((g) => g.bg === m.bg);
-export function allowed(u, rules) {
-  return (rules || []).some(
-    (r) =>
-      (r.role === "全部" ||
-        r.role === u.role ||
-        (r.role === "员工" && u.role !== "partner") ||
-        (r.role === "伙伴" && u.role === "partner")) &&
-      u.grants.some((g) =>
-        ["bg", "region", "channel"].every(
-          (k) => r[k] === "全部" || g[k] === r[k],
-        ),
-      ),
-  );
-}
 export function visible(m, u, catalog = [], visited = new Set()) {
   if (!active(m) || visited.has(m.id)) return null;
   if (m.proofId) {
@@ -55,40 +43,28 @@ export function visible(m, u, catalog = [], visited = new Set()) {
 export function str(v, n = 240) {
   return typeof v === "string" ? v.trim().slice(0, n) : "";
 }
-export function validRules(v) {
-  need(
-    Array.isArray(v) &&
-      v.length <= 25 &&
-      v.every(
-        (r) =>
-          r &&
-          ["role", "bg", "region", "channel"].every(
-            (k) =>
-              typeof r[k] === "string" && r[k].length > 0 && r[k].length <= 60,
-          ),
-      ),
-    400,
-    "请完整选择受众范围",
-  );
-  return v.map((r) =>
-    Object.fromEntries(
-      ["role", "bg", "region", "channel"].map((k) => [k, str(r[k], 60)]),
-    ),
-  );
+function selection(v, label, options, legacy) {
+  if (v === ALL) return ALL;
+  const items = values(v);
+  need(items.length && items.length <= 250 && items.every((item) =>
+    typeof item === "string" && item.trim() && item.length <= 60 && item !== ALL &&
+    (options.has(item) || legacy.has(item))), 400, "请选择有效的" + label);
+  return [...new Set(items)].sort();
 }
-export function subset(dl, view) {
-  return dl.every((d) =>
-    view.some((v) =>
-      ["role", "bg", "region", "channel"].every(
-        (k) =>
-          v[k] === "全部" ||
-          v[k] === d[k] ||
-          (k === "role" &&
-            v[k] === "员工" &&
-            ["sales", "editor", "reviewer"].includes(d[k])),
-      ),
-    ),
-  );
+export function validRules(v, catalog, prior = []) {
+  need(Array.isArray(v) && v.length <= 25, 400, "最多可配置 25 组受众");
+  const options = (items) => new Set(items.map((x) => x.value));
+  const countries = options(catalog.countries), channels = options(catalog.partnerTypes);
+  const historical = (key) => new Set(prior.flatMap((r) => values(r[key])));
+  const oldCountries = historical("country"), oldChannels = historical("channel");
+  return v.map((r) => {
+    need(r && [ALL, "员工", "伙伴", ...roles].includes(r.role) &&
+      [r.bg, r.region].every((x) => typeof x === "string" && x.trim() && x.length <= 60),
+      400, "请完整选择身份、BG 和区域");
+    return { role: r.role, bg: r.bg.trim(), region: r.region.trim(),
+      country: selection(r.country === undefined ? ALL : r.country, "国家", countries, oldCountries),
+      channel: selection(r.channel, "伙伴类型", channels, oldChannels) };
+  });
 }
 export const prefs = (s, u) =>
   s.users[u.id] ||

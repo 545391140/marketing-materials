@@ -38,7 +38,9 @@ export function safeProfile(u) {
     id: u.id,
     name: u.name || u.id,
     role: u.role,
-    grants: u.grants,
+    grants: u.grants.filter((g) => g && g.active !== false && typeof g.bg === "string")
+      .map((g) => ({ ...g, country: typeof g.country === "string" ? g.country.trim().toUpperCase() : undefined })),
+    audienceCatalog: u.audienceCatalog,
     org: u.org || "",
     en: u.en || u.name,
   };

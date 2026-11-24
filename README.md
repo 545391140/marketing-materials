@@ -26,7 +26,7 @@ npm start
 
 - 前端采用 Vue 2.7.16、Vuex 3.6.2 和 vue-i18n 6.1.3，与已核实的海外 Partner Center 前端版本一致。支持手机、桌面和中英文导航；资料正文按发布语言展示。
 - 服务端使用标准 Fetch API。托管版本通过私有 R2 绑定 `BUCKET` 保存状态、文件和预览；本地适配器使用 SQLite。试点的审核、交付和消息写入使用同一次条件更新；并发更新会重试。扩大用户量时应将按试点存储的业务状态拆为正式平台的关系数据表和队列。
-- 接口包括读取当前用户可见内容的 `GET /api/state`、提交业务操作的 `POST /api/actions`、员工上传的 `POST /api/upload`，以及服务端鉴权的附件与封面访问。可见范围由一条完整的身份、BG、区域和渠道归属共同判定。
+- 接口包括读取当前用户可见内容的 `GET /api/state`、提交业务操作的 `POST /api/actions`、员工上传的 `POST /api/upload`，以及服务端鉴权的附件与封面访问。可见范围由一条完整的身份、BG、区域、签约国家和伙伴类型共同判定。
 - 附件限 8 MB。PDF、DOCX、PPTX、TXT 提供文字预览，图片生成独立预览件。扫描版 PDF、加密或无法提取文字的文件需上传可预览版本。原件必须获得下载授权。演示空间做格式与大小检查；正式会话模式要求扫描服务返回通过。
 - 内置样例 PDF 已提交。若修改种子内容，可使用 Python、ReportLab 和 `scripts/seed-pdf.py` 重新生成对应 PDF。照片来源见 [图片说明](docs/photos.md)。
 
@@ -37,7 +37,7 @@ npm start
 | 设置 | 用途 |
 |---|---|
 | `DEMO_MODE=false` | 禁用演示身份选择。生产域名应在发布前显式配置。 |
-| `PC_SESSION_URL`、`PC_COOKIE_NAME` | 后端将门户会话令牌送往受信任的 HTTPS 校验服务。返回当前用户的 `id/name/role/org/active/grants`；角色为 partner、sales、editor 或 reviewer；每一组 grants 包含 bg、region 和 channel。每次业务请求重新校验。 |
+| `PC_SESSION_URL`、`PC_COOKIE_NAME` | 后端将门户会话令牌送往受信任的 HTTPS 校验服务。返回当前用户的 `id/name/role/org/active/grants`；角色为 partner、sales、editor 或 reviewer；每一组 grants 对应一条有效签约关系，包含 bg、region、country（ISO 两位国家代码）和 channel（门户伙伴类型代码）。active 为 false 的关系不参与匹配；缺少国家的关系仅能匹配不限国家的规则。每次业务请求重新校验。 |
 | `PC_DIRECTORY_URL`、`PC_SERVICE_TOKEN` | 交付离线用户前按 ID 查询其当前有效身份和归属。无可靠结果时保留待交付。 |
 | `SCAN_URL`、`SCAN_TOKEN` | 附件以二进制 POST 至可信扫描服务，仅在返回成功且 JSON 为 `{"clean":true}` 后保存。 |
 | 门户菜单、语言、消息 | 从门户菜单接入，支持 `?lang=zh` 或 `?lang=en`。本应用内消息可用；前台在窗口获得焦点时及每 30 秒检查新消息。配置 PC_MESSAGE_URL 后，通过 HTTPS POST 向门户消息适配器交付待发通知；接收方以 Idempotency-Key 去重，返回 2xx 表示已持久接收。请求或定时触发会重试失败消息，无人访问时应由部署平台配置定时触发器。真实消息协议需由门户方映射并联调。 |
@@ -51,3 +51,12 @@ npm start
 [项目建设方案](营销资料平台建设方案.md)
 
 可运行 `npm run test:worker` 在 workerd 与本地 R2 模拟存储中单独验证一次资料需求交付。[一期验收记录](docs/一期验收.md)
+
+
+### 国家与伙伴类型权限
+
+在「新增资料／编辑资料 → 伙伴访问权限」分别维护查看组、下载组。组内的国家、伙伴类型支持多选，同一条有效签约须满足所有维度。各组取并集。附件继承默认权限，也可单独收紧；修改须审核后生效。历史规则缺少 country 时沿用不限国家，原 BG、区域和渠道限制继续生效。
+
+正式门户的员工会话在 `audienceCatalog.partnerTypes` 中返回 `[{value,label}]`，value 与签约的 channel 一致。可选的 `audienceCatalog.countries` 使用同样结构，未提供时显示标准国家列表。会话与收件人目录的 grants 使用同一字段约定。正式环境不使用演示伙伴类型；历史已选代码可保留。
+
+验收示例：查看组设「泰国 × 经销商」和「越南 × 系统集成商」，下载组仅设后一组。演示身份林悦可预览，越南集成商可下载。在受众模拟中选择「东南亚、泰国、系统集成商」，应显示完全隐藏。
