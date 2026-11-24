@@ -1,6 +1,7 @@
 import { build } from "esbuild";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 await fs.rm("dist", { recursive: true, force: true });
 await fs.mkdir("dist/server", { recursive: true });
 await fs.mkdir("dist/.openai", { recursive: true });
@@ -18,7 +19,9 @@ const front = await build({
 });
 const assets = {};
 function add(k, v, type) {
-  assets[k] = { data: Buffer.from(v).toString("base64"), type };
+  const compressed = !type.startsWith("image/");
+  const bytes = compressed ? gzipSync(v, { level: 9 }) : Buffer.from(v);
+  assets[k] = { data: bytes.toString("base64"), type, compressed };
 }
 add("/app.js", front.outputFiles[0].contents, "application/javascript");
 add("/style.css", await fs.readFile("client/style.css"), "text/css");
@@ -50,21 +53,21 @@ try {
             namespace: "pdf-maps",
           }));
           build.onLoad({ filter: /.*/, namespace: "pdf-maps" }, async () => {
-            const dir = "node_modules/pdfjs-dist/cmaps";
-            const maps = {};
-            for (const name of await fs.readdir(dir)) {
-              if (name.endsWith(".bcmap"))
-                maps[name] = (await fs.readFile(path.join(dir, name))).toString(
-                  "base64",
-                );
+            const index = {};
+            const chunks = [];
+            let offset = 0;
+            for (const directory of ["cmaps", "standard_fonts"]) {
+              const dir = path.join("node_modules/pdfjs-dist", directory);
+              for (const name of (await fs.readdir(dir)).sort()) {
+                if (!/\.(bcmap|ttf|pfb)$/.test(name)) continue;
+                const bytes = await fs.readFile(path.join(dir, name));
+                index[name] = [offset, bytes.length];
+                chunks.push(bytes);
+                offset += bytes.length;
+              }
             }
-            const fonts = "node_modules/pdfjs-dist/standard_fonts";
-            for (const name of await fs.readdir(fonts))
-              if (/\.(ttf|pfb)$/.test(name))
-                maps[name] = (
-                  await fs.readFile(path.join(fonts, name))
-                ).toString("base64");
-            return { loader: "json", contents: JSON.stringify(maps) };
+            const data = gzipSync(Buffer.concat(chunks), { level: 9 }).toString("base64");
+            return { loader: "json", contents: JSON.stringify({ index, data }) };
           });
         },
       },

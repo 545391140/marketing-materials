@@ -1,3 +1,4 @@
+import { gunzipSync } from "fflate";
 import assets from "./built-assets.json";
 import { api } from "./api.js";
 import { sendPortalNotifications } from "./portal-notifications.js";
@@ -29,8 +30,9 @@ export default {
     }
     const a = assets[path === "/" ? "/index.html" : path];
     if (!a) return new Response("Not found", { status: 404 });
+    const data = Uint8Array.from(atob(a.data), (x) => x.charCodeAt(0));
     return new Response(
-      Uint8Array.from(atob(a.data), (x) => x.charCodeAt(0)),
+      a.compressed ? gunzipSync(data) : data,
       {
         headers: {
           "content-type": a.type,

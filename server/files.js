@@ -1,9 +1,17 @@
 import cmaps from "partner:pdf-cmaps";
-import { unzipSync, strFromU8 } from "fflate";
+import { unzipSync, gunzipSync, strFromU8 } from "fflate";
 import { need } from "./access.js";
 import jpeg from "jpeg-js";
 import { decode, encode } from "fast-png";
 import { extractText, getDocumentProxy } from "unpdf";
+let pdfResources;
+function readPdfResource(filename) {
+  pdfResources ??= gunzipSync(
+    Uint8Array.from(atob(cmaps.data), (c) => c.charCodeAt(0)),
+  );
+  const [offset, length] = cmaps.index[filename];
+  return pdfResources.slice(offset, offset + length);
+}
 export const mimes = {
   pdf: "application/pdf",
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -67,10 +75,10 @@ export async function inspect(bytes, ext) {
         async fetch({ kind, filename }) {
           if (
             !["cMapUrl", "standardFontDataUrl"].includes(kind) ||
-            !Object.hasOwn(cmaps, filename)
+            !Object.hasOwn(cmaps.index, filename)
           )
             throw Error("Unsupported PDF resource");
-          return Uint8Array.from(atob(cmaps[filename]), (c) => c.charCodeAt(0));
+          return readPdfResource(filename);
         }
       },
     });
