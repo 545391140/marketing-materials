@@ -39,8 +39,8 @@ const note = (s, r, user, action) => {
   r.history.push({ at: stamp(), name: user.name, action });
   r.updated = stamp();
 };
-const log = (s, u, action, id) =>
-  s.audit.unshift({ name: u.name, action, id, date: stamp() });
+const log = (s, u, action, id, details = {}) =>
+  s.audit.unshift({ name: u.name, action, id, date: stamp(), ...details });
 const message = (s, r, msg) =>
   s.notices.unshift({
     to: r.by,
@@ -76,6 +76,30 @@ function expiryNotices(materials, p) {
       };
     });
 }
+function fileInfo({ id, name, ext, size, usage, inherit, view, download, uploadedAt }) {
+  return { id, name, ext, size, usage, inherit, view, download, uploadedAt };
+}
+
+function pendingUploads(s, u) {
+  const referenced = new Set();
+  for (const m of [...s.materials, ...s.drafts]) {
+    referenced.add(m.coverId);
+    for (const f of m.files) referenced.add(f.id);
+  }
+  return Object.values(s.uploads || {})
+    .filter((f) => f.uploader === u.id && !f.filed && !referenced.has(f.id))
+    .reverse().map(fileInfo);
+}
+
+export function materialHistory(s, u, id) {
+  const m = s.drafts.find((d) => d.id === id) || s.materials.find((m) => m.id === id);
+  need(m && manages(u, m), 404, "资料不可用");
+  const mid = m.mid || m.id;
+  return s.audit.filter((e) =>
+    e.materialId ? e.materialId === mid && manages(u, e)
+      : e.id === m.id || e.id === mid);
+}
+
 export function snapshot(s, c) {
   const { u } = c,
     materials = s.materials
@@ -132,7 +156,9 @@ export function snapshot(s, c) {
   if (staff(u)) {
     out.admin = {
       audienceCatalog: audienceCatalog(c),
-      drafts: s.drafts.filter((m) => manages(u, m)),
+      managementBgs: [...new Set(u.grants.map((g) => g.bg))],
+      pendingUploads: pendingUploads(s, u),
+      drafts: s.drafts.filter((m) => manages(u, m)).map((m) => ({ ...m, files: m.files.map(fileInfo) })),
       published: s.materials
         .filter((m) => manages(u, m))
         .map((m) => ({
@@ -143,7 +169,7 @@ export function snapshot(s, c) {
               (p) =>
                 p.id === m.proofId && active(p) && p.version === m.proofVersion,
             ),
-          files: m.files.map(({ original, previewKey, preview, ...f }) => f),
+          files: m.files.map(fileInfo),
         })),
       queue: s.requests.filter(
         (r) => u.role === "reviewer" || u.grants.some((g) => g.bg === r.bg),
@@ -152,7 +178,7 @@ export function snapshot(s, c) {
       packDrafts: s.packDrafts.filter((d) => manages(u, d)),
       packs: s.packs.filter((d) => manages(u, d)),
       audit: s.audit
-        .filter((e) => e.name === u.name || u.role === "reviewer")
+        .filter((e) => e.materialId ? manages(u, e) : e.name === u.name || u.role === "reviewer")
         .slice(0, 60),
     };
   }
@@ -515,14 +541,16 @@ export async function change(s, c, env, a) {
     } else d.coverId = "";
     if (d.req && a.submit)
       need(d.deliveryFiles.length, 400, "请选择交付给提交人的附件");
-    if (old) Object.assign(old, d);
+    for (const id of [...files.map((f) => f.id), d.coverId])
+      if (s.uploads?.[id]) s.uploads[id].filed = true;
+    if (old) Object.assign(old, d, { reason: "" });
     else s.drafts.unshift(d);
     if (assigned) {
       assigned.status = a.submit ? "审核中" : "处理中";
       assigned.owner = u.name;
       note(s, assigned, u, assigned.status);
     }
-    log(s, u, d.state, d.id);
+    log(s, u, d.state, d.id, { materialId: d.mid, title: d.title, bg: d.bg });
     return;
   }
   if (op === "review") {
@@ -549,7 +577,7 @@ export async function change(s, c, env, a) {
         req.status = "处理中";
         note(s, req, u, "资料退回修改");
       }
-      log(s, u, "退回草稿", d.id);
+      log(s, u, "退回草稿", d.id, { materialId: d.mid, title: d.title, bg: d.bg, note: d.reason });
       return;
     }
     if (d.proofId)
@@ -598,7 +626,11 @@ export async function change(s, c, env, a) {
         note(s, req, u, "需另备符合用途的版本");
       }
     }
-    log(s, u, "审核发布 v" + m.version, m.id);
+    log(s, u, "审核发布 v" + m.version, m.id, {
+      materialId: m.id, title: m.title, bg: m.bg, version: m.version,
+      note: [m.revisionNote, brief(a.comment)].filter(Boolean).join(" · "),
+      owner: m.owner, filenames: m.files.map((f) => f.name),
+    });
     return;
   }
   if (op === "withdraw") {
@@ -607,7 +639,7 @@ export async function change(s, c, env, a) {
     need(brief(a.comment), 400, "请填写下架原因");
     m.published = false;
     notifySaved(s, m, "清单或收藏中的资料已下架");
-    log(s, u, "下架：" + brief(a.comment), m.id);
+    log(s, u, "下架：" + brief(a.comment), m.id, { materialId: m.id, title: m.title, bg: m.bg });
     return;
   }
   need(false, 400, "未知操作");

@@ -38,6 +38,9 @@ export default {
       section: "资料管理",
       filter: "",
       q: "",
+      typeFilter: "",
+      bgFilter: "",
+      historyRows: null,
       mine: false,
       view: "",
       form: blank(),
@@ -59,6 +62,7 @@ export default {
       tasks,
       sections: [
         ["资料管理", "Library"],
+        ["待整理附件", "UploadCloud"],
         ["需求池", "Inbox"],
         ["发布审核", "ShieldCheck"],
         ["场景包", "Layers"],
@@ -98,18 +102,35 @@ export default {
         )
         .sort((x, y) => (x.due || "9999").localeCompare(y.due || "9999"));
     },
-    materialRows() {
+    ledger() {
+      const today = new Date().toISOString().slice(0, 10);
+      const cutoff = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
       return [
         ...this.a.drafts.map((m) => ({ ...m, draft: true })),
         ...this.a.published.map((m) => ({
           ...m,
-          state: m.published ? "已发布" : "已下架",
+          state: !m.published ? "已下架" : m.expires && m.expires < today ? "已过期" : "已发布",
+          expiring: m.published && m.expires >= today && m.expires <= cutoff,
         })),
-      ].filter(
-        (m) =>
-          (!this.filter || m.state === this.filter) &&
-          (!this.q || m.title.includes(this.q)),
-      );
+      ];
+    },
+    workItems() {
+      return [
+        { title: "待整理附件", count: this.a.pendingUploads.length, section: "待整理附件", icon: "UploadCloud" },
+        { title: "待受理需求", count: this.a.queue.filter((r) => r.status === "待受理").length, section: "需求池", filter: "待受理", icon: "Inbox" },
+        { title: "待审核", count: this.pending, section: "发布审核", icon: "ShieldCheck" },
+        ...["已退回", "即将到期", "已过期", "证据待复核"].map((title) => ({
+          title, count: this.ledger.filter((m) => this.matchesState(m, title)).length,
+          section: "资料管理", filter: title, icon: title === "已退回" ? "PenLine" : "Clock3",
+        })),
+      ];
+    },
+    materialRows() {
+      const keyword = this.q.trim().toLowerCase();
+      return this.ledger.filter((m) =>
+        this.matchesState(m, this.filter) && (!this.typeFilter || m.type === this.typeFilter) &&
+        (!this.bgFilter || m.bg === this.bgFilter) &&
+        [m.title, m.owner, m.cat, ...m.files.map((f) => f.name)].some((s) => s?.toLowerCase().includes(keyword)));
     },
     r() {
       return this.a.queue.find((r) => r.id === this.reqId);
@@ -129,10 +150,41 @@ export default {
     action(a, msg) {
       return this.$root.action(a, msg);
     },
+    matchesState(m, filter) {
+      if (filter === "即将到期") return m.expiring;
+      if (filter === "证据待复核") return m.published && m.proofNeedsReview;
+      return !filter || m.state === filter;
+    },
+    openWork(item) {
+      this.sectionTo(item.section);
+      this.filter = item.filter || "";
+    },
+    resumeUpload(file) {
+      this.edit();
+      this.form.title = file.name.replace(/\.[^.]+$/, "");
+      this.form.defaultView = clone(file.view || []);
+      this.form.defaultDownload = clone(file.download || []);
+      this.form.files = [{ ...clone(file), view: clone(file.view || []),
+        download: clone(file.download || []), usage: "伙伴学习", inherit: !!file.inherit }];
+    },
+    async showHistory(m) {
+      this.review = m;
+      this.view = "history";
+      this.localError = "";
+      this.historyRows = null;
+      try {
+        const entries = await call("admin/history?id=" + encodeURIComponent(m.id));
+        if (this.review === m) this.historyRows = entries;
+      } catch (e) {
+        if (this.review === m) this.localError = e.message;
+      }
+    },
     sectionTo(s) {
       this.section = s;
       this.filter = "";
       this.q = "";
+      this.typeFilter = "";
+      this.bgFilter = "";
       this.view = "";
       this.localError = "";
     },
@@ -143,6 +195,7 @@ export default {
     edit(m = null, req = "") {
       this.localError = "";
       let b = blank();
+      b.bg = this.a.managementBgs[0] || "";
       if (m) {
         const isDraft = m.draft || !!m.mid;
         b = {
@@ -194,6 +247,7 @@ export default {
       } finally {
         this.uploading = false;
         e.target.value = "";
+        this.$root.pollInbox();
       }
     },
     async uploadCover(e) {

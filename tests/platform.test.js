@@ -661,3 +661,58 @@ test("local shared deployment exposes submitted drafts across sessions and appro
   await partner.user("partner");
   assert.equal((await partner.get(url)).status,404);
 });
+
+test("staff recover their own staged upload and trace it through return, publication, revision and withdrawal", async () => {
+  const h = harness();
+  await h.data();
+  await h.user("editor");
+  const rules = [{ role: "伙伴", bg: "EBG", region: "东南亚", country: ["VN"], channel: ["集成"] }];
+  const form = new FormData();
+  form.append("file", new Blob(["渠道资料验收"]), "渠道资料.txt");
+  form.append("permissions", JSON.stringify({
+    inherit: false, defaultView: rules, defaultDownload: [], view: rules, download: [],
+  }));
+  const upload = await h.get("/api/upload", form);
+  assert.equal(upload.status, 200);
+  const file = await upload.json();
+  const staged = (await h.data()).admin.pendingUploads;
+  assert.equal(staged.length, 1);
+  assert.deepEqual(staged[0].view, rules);
+  assert.deepEqual(staged[0].download, []);
+  assert(!("original" in staged[0]));
+  await h.user("reviewer");
+  assert.deepEqual((await h.data()).admin.pendingUploads, []);
+  await h.user("editor");
+  const save = {
+    op: "save", title: "集成商手册", summary: "验收", type: "客户案例", cat: "园区网络",
+    defaultView: rules, defaultDownload: [], files: [{ ...file, usage: "伙伴学习" }],
+  };
+  await h.act(save);
+  let admin = (await h.data()).admin;
+  assert.deepEqual(admin.pendingUploads, []);
+  const draft = admin.drafts[0];
+  await h.act({ ...save, id: draft.id, submit: true });
+  await h.user("reviewer");
+  await h.act({ op: "review", id: draft.id, approve: false, comment: "请校对" });
+  await h.user("editor");
+  await h.act({ ...save, id: draft.id, submit: true });
+  await h.user("reviewer");
+  await h.act({ op: "review", id: draft.id, approve: true });
+  await h.user("editor");
+  await h.act({ ...save, mid: draft.mid, revisionNote: "增加目录", submit: true });
+  await h.user("reviewer");
+  admin = (await h.data()).admin;
+  await h.act({ op: "review", id: admin.drafts[0].id, approve: true });
+  await h.act({ op: "withdraw", id: draft.mid, comment: "结束使用" });
+  const url = "/api/admin/history?id=" + draft.mid;
+  const history = await (await h.get(url)).json();
+  assert.deepEqual(history.map((e) => e.action), [
+    "下架：结束使用", "审核发布 v2", "待审核", "审核发布 v1", "待审核", "退回草稿", "待审核", "草稿",
+  ]);
+  assert.equal(history[1].note, "增加目录");
+  assert.deepEqual(history[1].filenames, ["渠道资料.txt"]);
+  assert.equal(history[5].note, "请校对");
+  await h.user("partnerVn");
+  assert.equal((await h.get(url)).status, 404);
+  assert.equal((await h.data()).admin, null);
+});

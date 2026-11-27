@@ -1541,3 +1541,31 @@ textarea {
     scroll-behavior: auto !important;
   }
 }
+
+.work-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+  margin: 4px 0 22px;
+}
+.work-items button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #dde3ec;
+  border-radius: 12px;
+  background: #f7f9fc;
+  color: #33445d;
+  text-align: left;
+}
+.work-items button:hover, .work-items button.selected {
+  background: #eaf1ff;
+  border-color: #809bcc;
+}
+.work-items strong { font-size: 21px; }
+.work-items span { grid-column: 1 / -1; font-size: 12px; }
+.history-event { border-left: 2px solid #d3ddeb; padding: 8px 16px; overflow-wrap: anywhere; }
+.history-event small { display: block; margin-top: 4px; color: #526273; }
+.history-event p { margin: 6px 0; }

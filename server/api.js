@@ -1,7 +1,7 @@
 import { identity, readState, update } from "./db.js";
 import { audienceCatalog } from "./audience-catalog.js";
 import { uid, need, visible, manages, allowed, active, validRules, subset } from "./access.js";
-import { snapshot, change } from "./service.js";
+import { snapshot, change, materialHistory } from "./service.js";
 import { profiles } from "./seed.js";
 import { inspect, mimes } from "./files.js";
 import pdfs from "./sample-pdf.json";
@@ -39,6 +39,9 @@ export async function api(req, env) {
     if (req.method === "GET" && path === "/api/state") {
       const { s, tag } = await readState(env, ns);
       response = json({ ...snapshot(s, ctx), revision: tag, workspaceMode: ctx.workspaceMode });
+    } else if (req.method === "GET" && path === "/api/admin/history") {
+      const { s } = await readState(env, ns);
+      response = json(materialHistory(s, u, url.searchParams.get("id")));
     } else if (req.method === "GET" && path === "/api/inbox") {
       const { s, tag } = await readState(env, ns);
       const state = snapshot(s, ctx);
@@ -138,6 +141,7 @@ export async function api(req, env) {
         preview: preview.text || "",
         mime: preview.mime,
         uploader: u.id,
+        uploadedAt: new Date().toISOString(),
         ...permissions,
       };
       await update(env, ns, (s) => {
