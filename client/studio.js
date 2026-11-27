@@ -1,3 +1,5 @@
+import flowConfig from "./flow-config.js";
+import { selectFlow, currentStep, canReview } from "../shared/approval.js";
 import { rules, call, date, tasks } from "./shared.js";
 import { ruleEditor, reviewScope } from "./audience.js";
 import { allowed } from "../shared/audience.js";
@@ -9,6 +11,8 @@ const blank = () => ({
   title: "",
   type: "解决方案",
   cat: "园区网络",
+  product: "",
+  solution: "",
   industry: "通用",
   bg: "EBG",
   task: tasks[0],
@@ -31,7 +35,7 @@ const blank = () => ({
 export default {
   template,
   props: ["d", "busy"],
-  components: { ruleEditor, reviewScope },
+  components: { ruleEditor, reviewScope, flowConfig },
   data() {
     return {
       sim: { role: "伙伴", bg: "EBG", region: "东南亚", country: "TH", channel: "经销" },
@@ -42,6 +46,7 @@ export default {
       bgFilter: "",
       historyRows: null,
       mine: false,
+      assignedOnly: false,
       view: "",
       form: blank(),
       tagText: "",
@@ -65,6 +70,7 @@ export default {
         ["待整理附件", "UploadCloud"],
         ["需求池", "Inbox"],
         ["发布审核", "ShieldCheck"],
+        ["审批流程", "ListChecks"],
         ["场景包", "Layers"],
         ["分类与类型", "Settings2"],
         ["操作记录", "Activity"],
@@ -74,6 +80,15 @@ export default {
   computed: {
     a() {
       return this.d.admin;
+    },
+    matchedFlow() { return selectFlow(this.a.approvalRules, this.form); },
+    reviewQueue() {
+      return this.a.drafts.filter((d) => d.state === "待审核" &&
+        (!this.assignedOnly || canReview(d, this.d.user)));
+    },
+    reviewKits() {
+      return this.a.packDrafts.filter((d) => d.state === "待审核" &&
+        (!this.assignedOnly || (this.isRev && d.author !== this.d.user.id)));
     },
     previousMaterial() {
       return this.review && this.a.published.find((m) => m.id === this.review.mid);
@@ -147,6 +162,8 @@ export default {
       return this.$root.tx(v);
     },
     date,
+    currentStep,
+    canReview,
     action(a, msg) {
       return this.$root.action(a, msg);
     },
@@ -182,6 +199,7 @@ export default {
     sectionTo(s) {
       this.section = s;
       this.filter = "";
+      this.assignedOnly = false;
       this.q = "";
       this.typeFilter = "";
       this.bgFilter = "";
@@ -305,6 +323,7 @@ export default {
         await this.action({
           op: "review",
           id: this.review.id,
+          stepToken: this.review.approval?.token,
           approve,
           comment: this.comment,
         })

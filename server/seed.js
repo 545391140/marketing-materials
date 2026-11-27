@@ -30,6 +30,10 @@ export const profiles = {
     org: "市场内容 · 资料维护",
     grants: [{ bg: "EBG", region: "华东", channel: "员工" }],
   },
+  productReviewer: {
+    id: "productReviewer", name: "顾言", en: "Yan Gu", role: "reviewer", org: "产品审核",
+    grants: [{ bg: "EBG", region: "华东", channel: "员工" }],
+  },
   reviewer: {
     id: "reviewer",
     name: "许晴",

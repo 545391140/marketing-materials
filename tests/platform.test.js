@@ -716,3 +716,69 @@ test("staff recover their own staged upload and trace it through return, publica
   assert.equal((await h.get(url)).status, 404);
   assert.equal((await h.data()).admin, null);
 });
+
+test("configured product, solution and type routes are scoped, frozen per submission and enforce each reviewer", async () => {
+  const h = harness();
+  await h.data();
+  const rule = { op: "saveFlow", name: "产品技术与运营", bg: "EBG", priority: 10, active: true,
+    product: "交换机", solution: "分支互联", type: "客户案例", steps: [
+      { name: "技术审查", reviewerId: "productReviewer" },
+      { name: "运营发布", reviewerId: "reviewer" },
+    ] };
+  await h.user("editor");
+  await h.act(rule, 403);
+  await h.user("reviewer");
+  await h.act({ op: "library", kind: "product", name: rule.product });
+  await h.act({ op: "library", kind: "solution", name: rule.solution });
+  await h.act({ ...rule, bg: "other" }, 403);
+  await h.act({ ...rule, steps: [{ name: "产品", reviewerId: "editor" }] }, 400);
+  await h.act(rule);
+  await h.act({ ...rule, name: "重复优先级" }, 409);
+  await h.act({ ...rule, name: "案例复核", priority: 20, product: "", solution: "",
+    steps: [{ name: "案例核对", reviewerId: "reviewer" }] });
+  const config = (await h.data()).admin.approvalRules[0];
+  await h.user("editor");
+  const fd = new FormData();
+  fd.append("file", new Blob(["测试产品资料"]), "产品资料.txt");
+  const file = await (await h.get("/api/upload", fd)).json();
+  const save = { op: "save", product: rule.product, solution: rule.solution, type: rule.type, cat: "园区网络",
+    summary: "测试", title: "技术案例", defaultView: [], defaultDownload: [],
+    files: [{ id: file.id, inherit: true, usage: "伙伴学习" }], submit: true };
+  const submit = async (patch) => {
+    await h.act({ ...save, ...patch });
+    return (await h.data()).admin.drafts.find((d) => d.title === (patch.title || save.title));
+  };
+  assert.equal((await submit({ product: "", title: "其他产品" })).approval.name, "案例复核");
+  assert.equal((await submit({ solution: "", title: "其他方案" })).approval.name, "案例复核");
+  assert.equal((await submit({ type: "产品资料", title: "其他类型" })).approval.name, "标准发布审核");
+  let draft = await submit({});
+  assert.equal(draft.approval.name, rule.name);
+  const decide = (token, approve = true, status = 200) => h.act({ op: "review", id: draft.id,
+    approve, stepToken: token, comment: "已核对" }, status);
+  const first = draft.approval.token;
+  await h.user("reviewer");
+  await decide(first, true, 403);
+  await h.act({ ...rule, ...config, active: false });
+  await h.act({ ...rule, ...config }, 409);
+  await h.user("productReviewer");
+  await decide(undefined, true, 409);
+  await decide(first);
+  let admin = (await h.data()).admin;
+  assert(!admin.published.some((m) => m.id === draft.mid));
+  draft = admin.drafts.find((d) => d.id === draft.id);
+  assert.equal(draft.approval.index, 1);
+  await h.user("reviewer");
+  await decide(first, true, 409);
+  await decide(draft.approval.token, false);
+  await h.user("editor");
+  draft = await submit({ id: draft.id });
+  assert.equal(draft.approval.name, "案例复核");
+  assert.equal(draft.approval.index, 0);
+  await h.user("reviewer");
+  await decide(draft.approval.token);
+  admin = (await h.data()).admin;
+  assert(!admin.drafts.some((d) => d.id === draft.id));
+  const published = admin.published.find((m) => m.id === draft.mid);
+  assert.equal(published.product, rule.product);
+  assert.equal(published.approval, undefined);
+});

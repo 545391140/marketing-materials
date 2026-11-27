@@ -1,3 +1,5 @@
+import { saveFlow, startApproval } from "./approval.js";
+import { canReview, currentStep } from "../shared/approval.js";
 import {
   need,
   uid,
@@ -158,6 +160,7 @@ export function snapshot(s, c) {
       audienceCatalog: audienceCatalog(c),
       managementBgs: [...new Set(u.grants.map((g) => g.bg))],
       pendingUploads: pendingUploads(s, u),
+      approvalRules: (s.approvalRules || []).filter((r) => manages(u, r)).sort((a, b) => a.priority - b.priority),
       drafts: s.drafts.filter((m) => manages(u, m)).map((m) => ({ ...m, files: m.files.map(fileInfo) })),
       published: s.materials
         .filter((m) => manages(u, m))
@@ -178,7 +181,7 @@ export function snapshot(s, c) {
       packDrafts: s.packDrafts.filter((d) => manages(u, d)),
       packs: s.packs.filter((d) => manages(u, d)),
       audit: s.audit
-        .filter((e) => e.materialId ? manages(u, e) : e.name === u.name || u.role === "reviewer")
+        .filter((e) => e.bg ? manages(u, e) : e.name === u.name || u.role === "reviewer")
         .slice(0, 60),
     };
   }
@@ -309,12 +312,21 @@ export async function change(s, c, env, a) {
     note(s, r, u, str(a.comment, 1500) || "已认领");
     return;
   }
+  if (op === "saveFlow") {
+    const rule = await saveFlow(s, c, env, a);
+    log(s, u, (rule.active ? "保存审批流程 " : "停用审批流程 ") + rule.name, rule.id, { bg: rule.bg });
+    return;
+  }
   if (op === "library") {
     need(u.role === "reviewer", 403, "需要运营权限");
     const name = brief(a.name);
     need(name, 400, "名称不能为空");
     if (a.kind === "category") {
       if (!s.library.categories.includes(name)) s.library.categories.push(name);
+    } else if (a.kind === "product" || a.kind === "solution") {
+      const key = a.kind === "product" ? "products" : "solutions";
+      const entries = s.library[key] || (s.library[key] = []);
+      if (!entries.includes(name)) entries.push(name);
     } else {
       const old = s.library.types.find((t) => t.name === name);
       const t = {
@@ -491,7 +503,11 @@ export async function change(s, c, env, a) {
         400,
         "选择有效且可引用的证据资料",
       );
+    const product = brief(a.product ?? previous?.product), solution = brief(a.solution ?? previous?.solution);
+    need((!product || s.library.products?.includes(product)) &&
+      (!solution || s.library.solutions?.includes(solution)), 400, "请选择目录中的产品和方案");
     const d = {
+      product, solution,
       proofId: proof?.id || "",
       proofVersion: proof?.version || 0,
       id: old?.id || uid(),
@@ -527,6 +543,7 @@ export async function change(s, c, env, a) {
       owner: u.name,
       updated: day(),
     };
+    d.approval = a.submit ? startApproval(s, d) : null;
     if (a.coverId) {
       const f = s.uploads?.[a.coverId];
       need(
@@ -550,7 +567,7 @@ export async function change(s, c, env, a) {
       assigned.owner = u.name;
       note(s, assigned, u, assigned.status);
     }
-    log(s, u, d.state, d.id, { materialId: d.mid, title: d.title, bg: d.bg });
+    log(s, u, d.state, d.id, { materialId: d.mid, title: d.title, bg: d.bg, note: d.approval?.name });
     return;
   }
   if (op === "review") {
@@ -558,12 +575,17 @@ export async function change(s, c, env, a) {
     need(
       d &&
         manages(u, d) &&
-        d.state === "待审核" &&
-        u.role === "reviewer" &&
-        d.author !== u.id,
+        canReview(d, u),
       403,
       "需由另一名审核人审核",
     );
+    const flow = d.approval;
+    // Legacy clients can still process the built-in one-step route.
+    if (flow?.ruleId || a.stepToken)
+      need(flow && a.stepToken === flow.token, 409, "审批节点已更新，请重新打开资料");
+    need(typeof a.approve === "boolean", 400, "请选择审批结果");
+    const stage = currentStep(d).name;
+    const stageNote = flow?.ruleId ? flow.name + " · " + stage : "";
     const req = d.req
       ? s.requests.find(
           (r) => r.id === d.req && !["已交付", "已关闭"].includes(r.status),
@@ -577,7 +599,14 @@ export async function change(s, c, env, a) {
         req.status = "处理中";
         note(s, req, u, "资料退回修改");
       }
-      log(s, u, "退回草稿", d.id, { materialId: d.mid, title: d.title, bg: d.bg, note: d.reason });
+      log(s, u, "退回草稿", d.id, { materialId: d.mid, title: d.title, bg: d.bg, note: [stageNote, d.reason].filter(Boolean).join(" · ") });
+      return;
+    }
+    if (flow && flow.index < flow.steps.length - 1) {
+      flow.index += 1;
+      flow.token = uid();
+      log(s, u, "节点通过：" + stage, d.id, { materialId: d.mid, title: d.title,
+        bg: d.bg, note: [flow.name, brief(a.comment)].filter(Boolean).join(" · ") });
       return;
     }
     if (d.proofId)
@@ -599,6 +628,7 @@ export async function change(s, c, env, a) {
     );
     need(!d.expires || d.expires >= day(), 409, "资料已过期");
     const {
+      approval,
       state,
       reason,
       author,
@@ -628,7 +658,7 @@ export async function change(s, c, env, a) {
     }
     log(s, u, "审核发布 v" + m.version, m.id, {
       materialId: m.id, title: m.title, bg: m.bg, version: m.version,
-      note: [m.revisionNote, brief(a.comment)].filter(Boolean).join(" · "),
+      note: [stageNote, m.revisionNote, brief(a.comment)].filter(Boolean).join(" · "),
       owner: m.owner, filenames: m.files.map((f) => f.name),
     });
     return;
