@@ -37,13 +37,14 @@ export async function api(req, env) {
     const { u, ns } = ctx;
     let response;
     if (req.method === "GET" && path === "/api/state") {
-      const { s } = await readState(env, ns);
-      response = json(snapshot(s, ctx));
+      const { s, tag } = await readState(env, ns);
+      response = json({ ...snapshot(s, ctx), revision: tag, workspaceMode: ctx.workspaceMode });
     } else if (req.method === "GET" && path === "/api/inbox") {
-      const { s } = await readState(env, ns);
+      const { s, tag } = await readState(env, ns);
       const state = snapshot(s, ctx);
       response = json({
         userId: u.id,
+        revision: tag,
         notices: state.notices,
         requests: state.requests,
       });

@@ -236,9 +236,9 @@ export default {
         .split(/[,，]/)
         .map((s) => s.trim())
         .filter(Boolean);
-      if (await this.action({ ...this.form, op: "save", submit })) {
-        this.back();
-        this.section = "资料管理";
+      if (await this.action({ ...this.form, op: "save", submit },
+        submit ? "已提交审核，请由另一位审核人到发布审核处理" : "已保存草稿，提交审核后才会进入审核队列")) {
+        this.sectionTo("资料管理");
       } else this.localError = this.$root.err;
     },
     inspect(m) {

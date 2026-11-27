@@ -633,3 +633,31 @@ test("upload saves each batch's permission rules and applies them after approval
   await h.user("partnerVn");
   assert.equal(await (await h.get(file(v,true))).text(),"越南专享");
 });
+
+test("local shared deployment exposes submitted drafts across sessions and approved files only to allowed partners", async () => {
+  const env = { ...backend(), LOCAL_RUNTIME: true, LOCAL_WORKSPACE: "local" };
+  const editor = harness(env), reviewer = harness(env), partner = harness(env);
+  await editor.user("editor");
+  await reviewer.user("reviewer");
+  partner.jar.set("material_space", "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa");
+  const before = await partner.data();
+  const input = new FormData();
+  input.append("file", new Blob(["release note"]), "release.txt");
+  const file = await (await editor.get("/api/upload", input)).json();
+  assert.equal((await reviewer.data()).admin.drafts.length, 0);
+  const rule = [{ role:"伙伴", bg:"EBG", region:"东南亚", country:["VN"], channel:["集成"] }];
+  const save = {op:"save", title:"共享资料", summary:"现场验收", type:"客户案例",cat:"园区网络",
+    defaultView:rule, defaultDownload:rule,files:[{id:file.id, inherit:true,usage:"可发客户"}]};
+  await editor.act({...save, submit:true});
+  const draft = (await reviewer.data()).admin.drafts.find((m) => m.title === save.title);
+  assert.equal(draft.state, "待审核");
+  await partner.user("partnerVn");
+  assert(!(await partner.data()).materials.some((m) => m.id === draft.mid));
+  await reviewer.act({op:"review",id:draft.id,approve:true});
+  const inbox = await (await partner.get("/api/inbox")).json();
+  assert.notEqual(inbox.revision,before.revision);
+  const url = "/api/file?m="+draft.mid+"&f="+file.id+"&mode=download";
+  assert.equal(await (await partner.get(url)).text(),"release note");
+  await partner.user("partner");
+  assert.equal((await partner.get(url)).status,404);
+});

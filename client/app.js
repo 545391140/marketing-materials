@@ -250,14 +250,20 @@ const app = new Vue({
       const prev = this.d;
       try {
         const inbox = await call("inbox");
-        if (this.d !== prev || this.d.user.id !== inbox.userId) return;
-        const seen = new Set(this.d.notices.map((n) => n.key));
-        const fresh = inbox.notices.find((n) => !n.read && !seen.has(n.key));
-        store.commit("refresh", {
-          ...prev,
-          notices: inbox.notices,
-          requests: inbox.requests,
-        });
+        if (this.d !== prev || this.busy) return;
+        const identityChanged = prev.user.id !== inbox.userId;
+        const next = identityChanged || inbox.revision !== prev.revision
+          ? await call("state")
+          : { ...prev, notices: inbox.notices, requests: inbox.requests };
+        if (this.d !== prev || this.busy) return;
+        const seen = new Set(prev.notices.map((n) => n.key));
+        const fresh = next.notices.find((n) => !n.read && !seen.has(n.key));
+        store.commit("refresh", next);
+        if (identityChanged) {
+          this.due = next.prefs.deadline;
+          this.notes = next.prefs.notes;
+          this.nav(next.admin ? "studio" : "discover");
+        }
         if (fresh) this.toast(fresh.msg);
       } catch {
         /* Keep the open form and retry at the next poll. */

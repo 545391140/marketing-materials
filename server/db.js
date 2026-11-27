@@ -56,11 +56,14 @@ export async function identity(req, env) {
     return { u: safeProfile(await r.json()), ns: "portal", demo: false };
   }
   need(env.DEMO_MODE === "true", 503, "尚未配置门户身份服务");
+  const select = cookie(req, "material_profile");
+  const u = Object.hasOwn(profiles, select) ? profiles[select] : profiles.partner;
+  if (env.LOCAL_RUNTIME && env.LOCAL_WORKSPACE)
+    return { u, ns: env.LOCAL_WORKSPACE, demo: true, workspaceMode: "local-shared" };
   let ns = cookie(req, "material_space");
   let fresh = !/^[a-f0-9-]{36}$/.test(ns);
   if (fresh) ns = uid();
-  const select = cookie(req, "material_profile");
-  return { u: profiles[select] || profiles.partner, ns, demo: true, fresh };
+  return { u, ns, demo: true, fresh, workspaceMode: env.LOCAL_RUNTIME ? "local-isolated" : "isolated" };
 }
 export async function recipient(ctx, env, id) {
   if (ctx.demo) return profiles[id];

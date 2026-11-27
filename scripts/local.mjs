@@ -2,12 +2,17 @@ import http from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { localWorkspace } from "./local-workspace.mjs";
 import worker from "../dist/server/index.js";
 mkdirSync(".runtime", { recursive: true });
 const db = new DatabaseSync(".runtime/local.sqlite");
 db.exec(
   "CREATE TABLE IF NOT EXISTS objects (key TEXT PRIMARY KEY, tag TEXT, data BLOB)",
 );
+const demo = !process.env.PC_SESSION_URL && (process.env.DEMO_MODE ?? "true") === "true";
+const sharedWorkspace = demo ? localWorkspace(db, process.argv.slice(2)) : "";
+if (sharedWorkspace === null) { db.close(); process.exit(0); }
+if (sharedWorkspace) console.log("本机共享试用空间：各浏览器共用演示身份、审核队列和资料库。");
 const bucket = {
   async get(k) {
     const r = db.prepare("SELECT * FROM objects WHERE key=?").get(k);
@@ -68,6 +73,8 @@ http
       const out = await worker.fetch(r, {
         ...process.env,
         BUCKET: bucket,
+        LOCAL_WORKSPACE: sharedWorkspace,
+        LOCAL_RUNTIME: true,
         DEMO_MODE: process.env.DEMO_MODE ?? "true",
       });
       const h = Object.fromEntries(out.headers);
