@@ -1,6 +1,9 @@
+import { effective, remember, knownProfile } from "./roles.js";
+import { has, any, materialCaps } from "../shared/permissions.js";
+import { diagnose } from "./system.js";
 import { identity, readState, update } from "./db.js";
 import { audienceCatalog } from "./audience-catalog.js";
-import { uid, need, visible, manages, allowed, active, validRules, subset } from "./access.js";
+import { uid, need, visible, manages, fileAllowed, active, validRules, subset } from "./access.js";
 import { snapshot, change, materialHistory } from "./service.js";
 import { profiles } from "./seed.js";
 import { inspect, mimes } from "./files.js";
@@ -34,17 +37,25 @@ export async function api(req, env) {
       need(req.headers.get("x-material-client") === "hub", 403, "无效请求");
     }
     ctx = await identity(req, env);
-    const { u, ns } = ctx;
+    const raw=ctx.u, ns=ctx.ns;
+    let stored=await readState(env,ns);
+    if(!ctx.demo && JSON.stringify(stored.s.directory?.find(p=>p.id===raw.id))!==JSON.stringify(knownProfile(raw))) {
+      await update(env,ns,s=>remember(s,raw));
+      stored=await readState(env,ns);
+    }
+    const scoped=(s)=>({...ctx,u:effective(s,raw,ctx,env),raw});
+    ctx=scoped(stored.s);
+    const u=ctx.u;
     let response;
     if (req.method === "GET" && path === "/api/state") {
-      const { s, tag } = await readState(env, ns);
-      response = json({ ...snapshot(s, ctx), revision: tag, workspaceMode: ctx.workspaceMode });
+      const { s, tag } = stored;
+      response = json({ ...snapshot(s, ctx, env), revision: tag, workspaceMode: ctx.workspaceMode });
     } else if (req.method === "GET" && path === "/api/admin/history") {
-      const { s } = await readState(env, ns);
+      const { s } = stored;
       response = json(materialHistory(s, u, url.searchParams.get("id")));
     } else if (req.method === "GET" && path === "/api/inbox") {
-      const { s, tag } = await readState(env, ns);
-      const state = snapshot(s, ctx);
+      const { s, tag } = stored;
+      const state = snapshot(s, ctx, env);
       response = json({
         userId: u.id,
         revision: tag,
@@ -57,12 +68,14 @@ export async function api(req, env) {
       need(Object.hasOwn(profiles, id), 400, "身份无效");
       response = json({ ok: true });
       setCookie(response, "material_profile", id, url);
+    } else if (req.method === "POST" && path === "/api/diagnose") {
+      response=json(await diagnose(stored.s,ctx,env,await req.json()));
     } else if (req.method === "POST" && path === "/api/actions") {
       const a = await req.json();
-      await update(env, ns, (s) => change(s, ctx, env, a));
+      await update(env, ns, (s) => change(s, scoped(s), env, a));
       response = json({ ok: true });
     } else if (req.method === "POST" && path === "/api/upload") {
-      need(["editor", "reviewer"].includes(u.role), 403, "无上传权限");
+      need(has(u,"edit"), 403, "无上传权限");
       need(
         +(req.headers.get("content-length") || 0) <= 8450000,
         413,
@@ -77,10 +90,10 @@ export async function api(req, env) {
         need(scope && typeof scope.inherit === "boolean", 400, "上传权限格式无效");
         let previous;
         if (scope.draftId || scope.materialId) {
-          const { s } = await readState(env, ns);
+          const { s } = stored;
           previous = scope.draftId ? s.drafts.find((d) => d.id === scope.draftId)
             : s.materials.find((m) => m.id === scope.materialId);
-          need(previous && manages(u, previous), 403, "无法使用此资料的权限");
+          need(previous && has(u,"edit",previous.bg), 403, "无法使用此资料的权限");
         }
         const catalog = audienceCatalog(ctx);
         const defV = validRules(scope.defaultView, catalog, previous?.defaultView);
@@ -145,11 +158,12 @@ export async function api(req, env) {
         ...permissions,
       };
       await update(env, ns, (s) => {
+        need(has(scoped(s).u,"edit"),403,"无上传权限");
         (s.uploads || (s.uploads = {}))[id] = f;
       });
       response = json({ id, name, ext, size: f.size, ...permissions });
     } else if (req.method === "GET" && path === "/api/cover") {
-      const { s } = await readState(env, ns);
+      const { s } = stored;
       const m = s.materials.find((x) => x.id === url.searchParams.get("m"));
       need(m && visible(m, u, s.materials) && m.coverId, 404, "封面不可用");
       const file = s.uploads?.[m.coverId];
@@ -158,21 +172,21 @@ export async function api(req, env) {
       need(o, 404, "封面不可用");
       response = fileResp(o.body, file.mime, "cover");
     } else if (req.method === "GET" && path === "/api/file") {
-      const { s } = await readState(env, ns),
+      const { s } = stored,
         mid = url.searchParams.get("m"),
         id = url.searchParams.get("f"),
         mode = url.searchParams.get("mode");
       const draft = url.searchParams.get("draft") === "1";
       const m = (draft ? s.drafts : s.materials).find((x) => x.id === mid);
       need(
-        m && (draft ? manages(u, m) : visible(m, u, s.materials)),
+        m && (draft ? any(u,materialCaps,m.bg) : visible(m, u, s.materials)),
         404,
         "资料不可用",
       );
       const f = m.files.find((x) => x.id === id);
-      need(f && (draft || allowed(u, f.view)), 404, "资料不可用");
+      need(f && (draft || fileAllowed(u,f.view,"browse")), 404, "资料不可用");
       if (mode === "download") {
-        need(!draft && allowed(u, f.download), 403, "没有下载权限");
+        need(!draft && fileAllowed(u,f.download,"download"), 403, "没有下载权限");
         let body;
         if (f.seed) {
           body =

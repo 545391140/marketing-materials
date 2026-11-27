@@ -1,0 +1,41 @@
+<div class="system-admin">
+<template v-if="section==='用户管理'">
+  <template v-if="!person">
+    <div class="tools-row"><input v-model="q" placeholder="搜索姓名、用户 ID 或组织"><button v-if="system.canSync" class="btn" :disabled="busy" @click="save({op:'syncDirectory'})">{{system.cursor?'继续同步下一页':'同步门户用户'}}</button></div>
+    <button class="row-item" v-for="p in rows" :key="p.id" @click="select(p)"><span class="grow"><strong>{{p.name}}</strong><small>{{p.id}} · {{p.org}} · {{p.active===false?'已停用':'有效'}}</small></span><span>{{p.scopes.map(s=>s.bg).join('、')}}</span><ic n="ChevronRight"/></button>
+    <p v-if="!rows.length" class="empty">没有匹配的用户</p>
+  </template><form v-else class="form" @submit.prevent="save({op:'assignRoles',userId:person.id,bg,ids,version:person.version})">
+    <h3>{{person.name}} · 角色授权</h3><p>{{person.id}} · {{person.org}}</p>
+    <label>授权 BG<select v-model="bg" @change="pick"><option v-for="g in person.scopes">{{g.bg}}</option></select></label>
+    <p v-for="g in person.grants.filter(g=>g.bg===bg)" class="meta-line">{{g.bg}} · {{g.region}} · {{g.country || '未指定国家'}} · {{g.channel}}</p>
+    <p v-if="person.root" class="notice">平台管理员由部署配置指定。</p>
+    <p v-else-if="!mayAssign" class="muted">{{names(ids)}} · 当前账号仅可查阅此用户</p><template v-else><label v-for="r in allowedRoles" class="tick"><input type="checkbox" :value="r.id" v-model="ids">{{r.name}}</label></template>
+    <div class="action-row"><button v-if="mayAssign" class="btn red" :disabled="busy">保存授权</button><button type="button" class="btn" @click="person=null">返回用户列表</button></div>
+  </form>
+</template>
+<div v-if="section==='菜单权限' && !role">
+  <div v-for="[area,items] in menuCatalog" :key="area"><h3>{{area}}</h3>
+    <div class="manage-row" v-for="[name,icon,keys] in items" :key="name"><div class="grow"><strong>{{name}}</strong>
+      <small>入口权限 · {{keys.map(k=>permissions[k]).join(' / ')}}</small>
+      <div class="action-row"><button class="btn mini" v-for="r in system.roles.filter(r=>r.caps.some(k=>keys.includes(k)))" @click="editRole(r)">{{r.name}}</button><span class="badge" v-if="keys.includes('roles')">平台管理员</span></div>
+    </div></div></div>
+</div>
+<template v-if="section==='角色管理' || (section==='菜单权限' && role)">
+  <template v-if="!role"><button class="btn red" @click="editRole(null)">新建业务角色</button>
+    <button class="row-item" v-for="r in system.roles" @click="editRole(r)"><span class="grow"><strong>{{r.name}}</strong><small>{{r.caps.map(k=>permissions[k]).join('、')}}</small></span><span class="badge">{{r.builtin?'内置':'自定义'}}</span></button>
+  </template><form v-else class="form" @submit.prevent="save({...role,op:'saveRole'})"><label>角色名称<input v-model.trim="role.name" required :disabled="role.builtin"></label>
+    <h3>菜单与操作权限</h3><div class="cap-grid"><label class="tick" v-for="(label,k) in permissions" v-if="k!=='roles'"><input type="checkbox" :disabled="role.builtin" v-model="role.caps" :value="k">{{label}}</label></div>
+    <p>可见后台菜单：{{groups.flatMap(g=>g[1]).filter(m=>m[2].some(k=>role.caps.includes(k))).map(m=>m[0]).join('、') || '无'}}</p>
+    <div class="action-row"><button v-if="!role.builtin" class="btn red" :disabled="busy">保存角色</button><button class="btn" type="button" @click="role=null">返回角色列表</button></div>
+  </form>
+</template>
+<form v-if="section==='权限诊断'" class="form" @submit.prevent="check"><label>目标用户<select required v-model="who" @change="result=null"><option value="" disabled>选择用户</option><option v-for="p in system.accounts" :value="p.id">{{p.name}} · {{p.id}}</option></select></label>
+  <label>目标资料<select required v-model="mid" @change="result=null"><option value="" disabled>选择资料</option><option v-for="m in [...admin.drafts,...admin.published]" :value="m.id">{{m.title}} · {{m.state || (m.published?'已发布':'已下架')}}</option></select></label>
+  <button class="btn">查询原因</button><p v-if="error">{{error}}</p><template v-if="result"><h3>{{result.reason}}</h3><p v-for="f in result.files">{{f.name}} · {{f.reason}}</p></template>
+</form>
+<template v-if="section==='在途审批'">
+  <button class="row-item" v-for="d in pending" @click="transfer=d;reason='';to=''"><span class="grow"><strong>{{d.title}}</strong><small>{{d.bg}} · {{d.approval ? d.approval.steps[d.approval.index].name : '发布审核'}} · {{admin.stalled.includes(d.id)?'目录内无可处理人员':'等待审核'}}</small></span>转派</button>
+  <p v-if="!pending.length" class="empty">暂无在途审批</p>
+  <form v-if="transfer" class="form" @submit.prevent="save({op:'reassignStep',id:transfer.id,token:transfer.approval ? transfer.approval.token : '',to,comment:reason})"><h3>{{transfer.title}}</h3>
+  <label>接收人门户 ID<input required v-model.trim="to"></label><label>转派原因<textarea required v-model.trim="reason"></textarea></label><button class="btn red" :disabled="busy">确认转派</button></form>
+</template></div>

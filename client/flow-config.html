@@ -1,20 +1,20 @@
 <div class="flow-config">
   <template v-if="!form">
     <div class="sec-head"><p>同一 BG 按优先级从小到大匹配，采用首条满足全部条件的启用流程。</p>
-      <button v-if="user.role==='reviewer'" class="btn red" @click="edit(null)"><ic n="Plus"/>新增流程</button></div>
+      <button v-if="canFlow()" class="btn red" @click="edit(null)"><ic n="Plus"/>新增流程</button></div>
     <div v-for="rule in admin.approvalRules" :key="rule.id" class="manage-row">
       <span class="tile-icon indigo"><ic n="ListChecks"/></span>
       <div class="grow"><strong>{{rule.name}}</strong>
         <small>{{rule.bg}} · 优先级 {{rule.priority}} · {{rule.product || '全部产品'}} / {{rule.solution || '全部方案'}} / {{rule.type || '全部类型'}}</small>
         <small>{{rule.steps.map(s=>s.name).join(' → ')}}</small></div>
-      <span class="badge">{{rule.active?'启用':'停用'}}</span><button v-if="user.role==='reviewer'" class="btn mini" @click="edit(rule)">编辑流程</button>
+      <span class="badge">{{rule.active?'启用':'停用'}}</span><button v-if="canFlow(rule.bg)" class="btn mini" @click="edit(rule)">编辑流程</button>
     </div>
     <p class="notice">未匹配自定义流程的资料由归属 BG 的另一名审核人完成标准发布审核。</p>
   </template>
   <form v-else class="form" @submit.prevent="save">
     <h3>{{form.id?'编辑流程':'新增流程'}}</h3>
     <div class="form-cols"><label>流程名称<input required maxlength="100" v-model.trim="form.name"></label>
-      <label>归属 BG<select aria-label="归属 BG" v-model="form.bg" :disabled="!!form.id"><option v-for="bg in admin.managementBgs">{{bg}}</option></select></label>
+      <label>归属 BG<select aria-label="归属 BG" v-model="form.bg" :disabled="!!form.id"><option v-for="bg in admin.managementBgs.filter(bg=>canFlow(bg))">{{bg}}</option></select></label>
       <label>优先级<input required type="number" min="1" max="9999" v-model.number="form.priority"></label></div>
     <h3>匹配条件</h3>
     <div class="form-cols"><label>产品<select aria-label="产品" v-model="form.product"><option value="">全部产品</option><option v-for="v in admin.library.products">{{v}}</option></select></label>
@@ -24,8 +24,9 @@
     <h3>审批顺序</h3>
     <fieldset v-for="(s,i) in form.steps" :key="i" class="scope-group"><legend>第 {{i+1}} 步</legend>
       <div class="form-cols"><label>节点名称<input required maxlength="100" v-model.trim="s.name"></label>
-        <label>审批账号<select v-if="demo" aria-label="审批账号" v-model="s.reviewerId"><option value="">该 BG 任一审核人</option>
-          <option v-for="p in choices.filter(p=>p.role==='reviewer')" :value="p.id">{{p.name}} · {{p.id}}</option></select>
+        <label>审批业务角色<select aria-label="审批业务角色" v-model="s.roleId" @change="s.reviewerId=''"><option value="">按账号或 BG</option><option v-for="r in admin.reviewerRoles" :value="r.id">{{r.name}}</option></select></label>
+        <label v-if="!s.roleId">审批账号<select v-if="demo" aria-label="审批账号" v-model="s.reviewerId"><option value="">该 BG 任一审核人</option>
+          <option v-for="p in admin.reviewerChoices.filter(p=>p.bgs.includes(form.bg))" :value="p.id">{{p.name}} · {{p.id}}</option></select>
           <input v-else v-model.trim="s.reviewerId" placeholder="门户用户 ID，留空由该 BG 任一审核人处理"></label></div>
       <div class="action-row"><button type="button" class="btn mini" :disabled="i===0" @click="move(i,-1)">上移</button>
         <button type="button" class="btn mini" :disabled="i===form.steps.length-1" @click="move(i,1)">下移</button>

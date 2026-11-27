@@ -1,3 +1,4 @@
+import {front,has} from "../shared/permissions.js";
 import { allowed, ALL, roles, values } from "../shared/audience.js";
 export { allowed, subset } from "../shared/audience.js";
 export class HttpError extends Error {
@@ -12,10 +13,14 @@ export function need(ok, status, msg) {
 export const uid = () => crypto.randomUUID();
 export const day = () => new Date().toISOString().slice(0, 10);
 export const active = (m) => m.published && (!m.expires || m.expires >= day());
-export const staff = (u) => u.role === "editor" || u.role === "reviewer";
+export const staff = (u) => u.scopes?.some((s)=>s.caps.some((key)=>!front.includes(key)));
 export const manages = (u, m) =>
   staff(u) && u.grants.some((g) => g.bg === m.bg);
+export function fileAllowed(u,rules,cap) {
+  return allowed(u.scopes ? {...u,grants:u.grants.filter((g)=>has(u,cap,g.bg) && has(u,"browse",g.bg))} : u,rules);
+}
 export function visible(m, u, catalog = [], visited = new Set()) {
+  if (u.scopes && !has(u,"browse")) return null;
   if (!active(m) || visited.has(m.id)) return null;
   if (m.proofId) {
     const proof = catalog.find((x) => x.id === m.proofId);
@@ -27,14 +32,14 @@ export function visible(m, u, catalog = [], visited = new Set()) {
       return null;
   }
   const files = m.files
-    .filter((f) => allowed(u, f.view))
+    .filter((f) => fileAllowed(u, f.view, "browse"))
     .map((f) => ({
       id: f.id,
       name: f.name,
       ext: f.ext,
       usage: f.usage,
       size: f.size || 0,
-      canDownload: allowed(u, f.download),
+      canDownload: fileAllowed(u, f.download,"download"),
     }));
   if (!files.length) return null;
   const { defaultView, defaultDownload, files: orig, ...meta } = m;
@@ -87,9 +92,9 @@ export function deliver(s, r, m, u, fileIds) {
     !visible(m, u, s.materials) ||
     !f.every(
       (a) =>
-        allowed(u, a.view) &&
-        (!r.external || (allowed(u, a.download) && a.usage === "可发客户")) &&
-        (!r.needDownload || allowed(u, a.download)),
+        fileAllowed(u,a.view,"browse") &&
+        (!r.external || (fileAllowed(u,a.download,"download") && a.usage === "可发客户")) &&
+        (!r.needDownload || fileAllowed(u,a.download,"download")),
     )
   )
     return false;

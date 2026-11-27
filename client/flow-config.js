@@ -1,15 +1,17 @@
+import { has } from "../shared/permissions.js";
 import template from "./flow-config.html";
 
-const step = () => ({ name: "", reviewerId: "" });
+const step = () => ({ roleId:"", name: "", reviewerId: "" });
 export default {
   template,
   props: ["admin", "user", "demo", "choices", "busy"],
   data: () => ({ form: null, error: "" }),
   methods: {
+    canFlow(bg){return has(this.user,"flow",bg);},
     edit(rule) {
       this.error = "";
       this.form = rule ? JSON.parse(JSON.stringify(rule)) : {
-        name: "", bg: this.admin.managementBgs[0], priority: 10, product: "", solution: "",
+        name: "", bg: this.admin.managementBgs.find(bg=>this.canFlow(bg)), priority: 10, product: "", solution: "",
         type: "", active: true, steps: [step()],
       };
     },

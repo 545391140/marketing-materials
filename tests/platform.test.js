@@ -547,9 +547,11 @@ test("country and partner-type groups enforce revisions, attachment limits and l
     partnerTypes: [{value:"reseller",label:"经销商"},{value:"si",label:"系统集成商"}],
   };
   let current = { ...profiles.editor, audienceCatalog };
-  t.mock.method(globalThis, "fetch", async () => Response.json(current));
-  const h = harness({ ...backend(), PC_SESSION_URL:"https://pc.invalid/session" });
+  t.mock.method(globalThis, "fetch", async (url) => Response.json(String(url).includes("/directory") ? profiles.reviewer : current));
+  const h = harness({ ...backend(), PC_SESSION_URL:"https://pc.invalid/session",PC_DIRECTORY_URL:"https://pc.invalid/directory",PC_SERVICE_TOKEN:"test" });
   h.jar.set("pc_session", "test");
+  current={...profiles.reviewer,audienceCatalog}; await h.data();
+  current={...profiles.editor,audienceCatalog};
   const state = await h.data();
   assert.deepEqual(state.admin.audienceCatalog, audienceCatalog);
   const mat = state.admin.published.find((m) => m.id === "retail");
@@ -781,4 +783,91 @@ test("configured product, solution and type routes are scoped, frozen per submis
   const published = admin.published.find((m) => m.id === draft.mid);
   assert.equal(published.product, rule.product);
   assert.equal(published.approval, undefined);
+});
+
+test("role grants govern menus, role approval, revocation, diagnostic, transfer and direct download", async()=>{
+  const h=harness();
+  await h.data();
+  await h.user("admin");
+  await h.act({op:"saveRole",name:"方案专家",caps:["browse","read","review"]});
+  const role=(await h.data()).admin.system.roles.find(r=>r.name==="方案专家");
+  const grant=(id,ids,version=0)=>h.act({op:"assignRoles",userId:id,bg:"EBG",ids,version});
+  await grant("sales",[role.id]);
+  await h.user("sales");
+  const flow={op:"saveFlow",name:"专家复核",bg:"EBG",priority:1,active:true,steps:[{name:"方案核对",roleId:role.id}]};
+  await h.act(flow,403);
+  await h.act({op:"assignRoles",userId:"editor",bg:"EBG",ids:["flow"],version:0},403);
+  await h.user("admin");await h.act(flow);
+  await h.user("editor");
+  const mat=(await h.data()).admin.published.find(m=>m.id==="retail");
+  const save={...mat,id:"",mid:mat.id,op:"save",submit:true,title:"方案新版本"};
+  await h.act(save);
+  const d=(await h.data()).admin.drafts[0];
+  await h.user("reviewer");
+  const approve={op:"review",id:d.id,stepToken:d.approval.token,approve:true};
+  await h.act(approve,403);
+  await h.user("admin");await grant("sales",["viewer"],1);
+  assert((await h.data()).admin.stalled.includes(d.id));
+  await h.user("sales");await h.act(approve,403);
+  await h.user("editor");await h.act({...save,title:"无法送审"},409);
+  await h.user("admin");
+  await h.act({op:"reassignStep",id:d.id,token:d.approval.token,to:"productReviewer",comment:"专家已调岗"});
+  await h.user("productReviewer");
+  await h.act(approve,409);
+  const next=(await h.data()).admin.drafts.find(x=>x.id===d.id);
+  await h.act({...approve,stepToken:next.approval.token});
+  await h.user("admin");
+  await h.act({op:"saveRole",name:"只读伙伴",caps:["browse"]});
+  const limited=(await h.data()).admin.system.roles.find(r=>r.name==="只读伙伴");
+  await grant("partner",[limited.id]);
+  const diag=await (await h.get("/api/diagnose",{userId:"partner",id:mat.id})).json();
+  assert(diag.files.some(f=>f.reason.includes("角色未授权下载")));
+  await h.user("partner");
+  assert.deepEqual((await h.data()).user.scopes[0].caps,["browse"]);
+  await h.act({op:"request",title:"test",purpose:"test"},403);
+  assert.equal((await h.get("/api/file?m=retail&f=retail-main&mode=download")).status,403);
+});
+
+test("portal BG assignments do not combine one role's scope with another role's operations", async(t)=>{
+  const {profiles}=await import("../server/seed.js");
+  const user={...profiles.sales,grants:[...profiles.sales.grants,{bg:"SMB",region:"华东",channel:"员工"}]};
+  let current=profiles.admin;
+  t.mock.method(globalThis,"fetch",async url=>Response.json(String(url).includes("directory")?user:current));
+  const h=harness({...backend(),PC_SESSION_URL:"https://pc.invalid/session",PC_DIRECTORY_URL:"https://pc.invalid/directory",
+    PC_ADMIN_IDS:"admin",PC_SERVICE_TOKEN:"test"});
+  h.jar.set("pc_session","test");
+  await h.data();
+  await h.act({op:"assignRoles",userId:"sales",bg:"EBG",ids:["reviewer"],version:0});
+  await h.act({op:"assignRoles",userId:"sales",bg:"SMB",ids:["editor"],version:1});
+  current=user;
+  const d=await h.data();
+  const m=d.admin.published.find(m=>m.id==="retail");
+  await h.act({...m,id:"",mid:m.id,op:"save",bg:"SMB"},403);
+  await h.act({op:"withdraw",id:m.id,comment:"错误范围"},403);
+  assert(!d.user.scopes.find(g=>g.bg==="EBG").caps.includes("edit"));
+  assert(!d.user.scopes.find(g=>g.bg==="SMB").caps.includes("review"));
+});
+
+test("platform administrator synchronizes portal directory pages and retains inactive account status",async(t)=>{
+  const {profiles}=await import("../server/seed.js");
+  let current=profiles.admin;
+  t.mock.method(globalThis,"fetch",async (url,options)=>{
+    if(String(url).includes("/session")) return Response.json(current);
+    assert.equal(options.headers.authorization,"Bearer service");
+    const next=new URL(url).searchParams.has("cursor");
+    return Response.json({users:[next?{...profiles.editor,active:false}:profiles.sales],next_cursor:next?null:"next"});
+  });
+  const h=harness({...backend(),PC_SESSION_URL:"https://pc.invalid/session",PC_USERS_URL:"https://pc.invalid/users",
+    PC_SERVICE_TOKEN:"service",PC_ADMIN_IDS:"admin"});
+  h.jar.set("pc_session","test");
+  await h.act({op:"syncDirectory"});
+  assert.equal((await h.data()).admin.system.cursor,"next");
+  await h.act({op:"syncDirectory"});
+  const system=(await h.data()).admin.system;
+  assert.equal(system.cursor,"");
+  assert(system.accounts.some(p=>p.id==="sales"));
+  assert(system.accounts.some(p=>p.id==="editor" && !p.active));
+  current=profiles.reviewer;
+  await h.act({op:"syncDirectory"},403);
+  await h.act({op:"saveFlow",bg:"EBG"},403);
 });

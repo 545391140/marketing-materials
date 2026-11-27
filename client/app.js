@@ -1,3 +1,4 @@
+import { has } from "../shared/permissions.js";
 import Vue from "vue";
 import Vuex from "vuex";
 import VueI18n from "vue-i18n";
@@ -114,6 +115,10 @@ const app = new Vue({
     },
     sc() {
       return this.scenes[this.pick];
+    },
+    frontNav(){
+      const nav={discover:["资料发现","browse"],library:["资料库","browse"],packs:["场景包","kits"],work:["我的工作台","personal"]};
+      return Object.fromEntries(Object.entries(nav).filter(([,v])=>has(this.d?.user,v[1])).map(([k,v])=>[k,v[0]]));
     },
     staff() {
       return !!this.d?.admin;
@@ -259,7 +264,7 @@ const app = new Vue({
         const seen = new Set(prev.notices.map((n) => n.key));
         const fresh = next.notices.find((n) => !n.read && !seen.has(n.key));
         store.commit("refresh", next);
-        if (identityChanged) {
+        if (identityChanged || JSON.stringify(prev.user.scopes)!==JSON.stringify(next.user.scopes)) {
           this.due = next.prefs.deadline;
           this.notes = next.prefs.notes;
           this.nav(next.admin ? "studio" : "discover");
@@ -331,6 +336,10 @@ const app = new Vue({
           : "discover";
         if (this.page === "studio" && !this.staff) this.page = "discover";
         if (this.page === "work" && this.tabs.includes(id)) this.tab = id;
+      }
+      if(this.page!=="studio" && !this.frontNav[this.page]) {
+        this.modal="";
+        this.page=Object.keys(this.frontNav)[0] || (this.staff?"studio":"empty");
       }
       this.account = false;
       this.menu = false;
@@ -441,6 +450,7 @@ const app = new Vue({
           this.preview = { ...this.preview, text: e.message, loading: false };
       }
     },
+    canFront(key){return has(this.d?.user,key);},
     async profile(id) {
       this.account = false;
       try {

@@ -1,3 +1,5 @@
+import systemAdmin from "./system-admin.js";
+import {has,menus} from "../shared/permissions.js";
 import flowConfig from "./flow-config.js";
 import { selectFlow, currentStep, canReview } from "../shared/approval.js";
 import { rules, call, date, tasks } from "./shared.js";
@@ -35,7 +37,7 @@ const blank = () => ({
 export default {
   template,
   props: ["d", "busy"],
-  components: { ruleEditor, reviewScope, flowConfig },
+  components: { ruleEditor, reviewScope, flowConfig, systemAdmin },
   data() {
     return {
       sim: { role: "伙伴", bg: "EBG", region: "东南亚", country: "TH", channel: "经销" },
@@ -65,25 +67,18 @@ export default {
       reviewPack: null,
       images: ["campus", "retail", "factory", "office", "datacenter", "event"],
       tasks,
-      sections: [
-        ["资料管理", "Library"],
-        ["待整理附件", "UploadCloud"],
-        ["需求池", "Inbox"],
-        ["发布审核", "ShieldCheck"],
-        ["审批流程", "ListChecks"],
-        ["场景包", "Layers"],
-        ["分类与类型", "Settings2"],
-        ["操作记录", "Activity"],
-      ],
+
     };
   },
   computed: {
+    menuGroups(){return menus(this.d.user);},
+    availableSections(){return this.menuGroups.flatMap(([,items])=>items.map(i=>i[0]));},
     a() {
       return this.d.admin;
     },
     matchedFlow() { return selectFlow(this.a.approvalRules, this.form); },
     reviewQueue() {
-      return this.a.drafts.filter((d) => d.state === "待审核" &&
+      return this.a.drafts.filter((d) => d.state === "待审核" && this.can("review",d.bg) &&
         (!this.assignedOnly || canReview(d, this.d.user)));
     },
     reviewKits() {
@@ -99,7 +94,7 @@ export default {
       return this.previousMaterial.files.filter((f) => !current.has(f.id));
     },
     isRev() {
-      return this.d.user.role === "reviewer";
+      return this.can("review");
     },
     pending() {
       return (
@@ -133,17 +128,17 @@ export default {
       return [
         { title: "待整理附件", count: this.a.pendingUploads.length, section: "待整理附件", icon: "UploadCloud" },
         { title: "待受理需求", count: this.a.queue.filter((r) => r.status === "待受理").length, section: "需求池", filter: "待受理", icon: "Inbox" },
-        { title: "待审核", count: this.pending, section: "发布审核", icon: "ShieldCheck" },
+        { title: "待我审核", count: this.a.drafts.filter(d=>canReview(d,this.d.user)).length + this.a.packDrafts.filter(d=>d.state==="待审核" && d.author!==this.d.user.id && this.can("review",d.bg)).length, section: "发布审核", icon: "ShieldCheck" },
         ...["已退回", "即将到期", "已过期", "证据待复核"].map((title) => ({
           title, count: this.ledger.filter((m) => this.matchesState(m, title)).length,
           section: "资料管理", filter: title, icon: title === "已退回" ? "PenLine" : "Clock3",
         })),
-      ];
+      ].filter(w=>this.availableSections.includes(w.section));
     },
     materialRows() {
       const keyword = this.q.trim().toLowerCase();
       return this.ledger.filter((m) =>
-        this.matchesState(m, this.filter) && (!this.typeFilter || m.type === this.typeFilter) &&
+        ["read","edit","withdraw"].some(key=>this.can(key,m.bg)) && this.matchesState(m, this.filter) && (!this.typeFilter || m.type === this.typeFilter) &&
         (!this.bgFilter || m.bg === this.bgFilter) &&
         [m.title, m.owner, m.cat, ...m.files.map((f) => f.name)].some((s) => s?.toLowerCase().includes(keyword)));
     },
@@ -157,7 +152,13 @@ export default {
       return this.a.library.types.find((t) => t.name === this.form.type);
     },
   },
+  watch:{
+    availableSections:{immediate:true,handler(list){
+      if(!list.includes(this.section)) this.sectionTo(list.includes("资料管理")?"资料管理":list[0]);
+    }},
+  },
   methods: {
+    can(k,bg){return has(this.d.user,k,bg);},
     t(v) {
       return this.$root.tx(v);
     },
@@ -175,6 +176,7 @@ export default {
     openWork(item) {
       this.sectionTo(item.section);
       this.filter = item.filter || "";
+      if(item.section==="发布审核") this.assignedOnly=true;
     },
     resumeUpload(file) {
       this.edit();
@@ -213,7 +215,7 @@ export default {
     edit(m = null, req = "") {
       this.localError = "";
       let b = blank();
-      b.bg = this.a.managementBgs[0] || "";
+      b.bg = this.d.user.scopes.find(s=>s.caps.includes("edit"))?.bg || "";
       if (m) {
         const isDraft = m.draft || !!m.mid;
         b = {

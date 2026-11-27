@@ -1,3 +1,6 @@
+import { systemView, administer } from "./system.js";
+import { effective, permittedUser, roleList, people } from "./roles.js";
+import { has, any, materialCaps } from "../shared/permissions.js";
 import { saveFlow, startApproval } from "./approval.js";
 import { canReview, currentStep } from "../shared/approval.js";
 import {
@@ -95,14 +98,14 @@ function pendingUploads(s, u) {
 
 export function materialHistory(s, u, id) {
   const m = s.drafts.find((d) => d.id === id) || s.materials.find((m) => m.id === id);
-  need(m && manages(u, m), 404, "资料不可用");
+  need(m && any(u,materialCaps,m.bg), 404, "资料不可用");
   const mid = m.mid || m.id;
   return s.audit.filter((e) =>
-    e.materialId ? e.materialId === mid && manages(u, e)
+    e.materialId ? e.materialId === mid && any(u,materialCaps,e.bg)
       : e.id === m.id || e.id === mid);
 }
 
-export function snapshot(s, c) {
+export function snapshot(s, c, env) {
   const { u } = c,
     materials = s.materials
       .map((m) => visible(m, u, s.materials))
@@ -134,17 +137,17 @@ export function snapshot(s, c) {
       deliveryFiles: undefined,
     }));
   const out = {
-    user: publicPerson(u),
+    user: {...publicPerson(u),scopes:u.scopes,root:u.root},
     demo: c.demo,
     choices: c.demo ? Object.values(profiles).map(publicPerson) : [],
     materials,
-    packs,
-    requests,
-    notices: [
+    packs:packs.filter(k=>has(u,"kits",k.bg)),
+    requests:has(u,"personal")?requests:[],
+    notices: has(u,"personal") ? [
       ...s.notices.filter((n) => n.to === u.id),
       ...expiryNotices(materials, p),
-    ],
-    prefs: {
+    ] : [],
+    prefs: !has(u,"personal") ? {fav:[],list:[],deadline:"",notes:""} : {
       ...p,
       fav: p.fav.filter((id) => ids.has(id)),
       list: p.list.map((id) => (ids.has(id) ? id : null)),
@@ -157,13 +160,18 @@ export function snapshot(s, c) {
   };
   if (staff(u)) {
     out.admin = {
+      system:any(u,["users","roles","diagnose"])?systemView(s,c,env):null,
+      stalled:s.drafts.filter(d=>d.state==="待审核" && has(u,"flow",d.bg) && !people(s,c).some(p=>
+        p.active!==false && canReview(d,effective(s,p,c,env)))).map(d=>d.id),
+      reviewerChoices:c.demo && has(u,"flow") ? people(s,c).map(p=>({id:p.id,name:p.name,bgs:effective(s,p,c,env).scopes.filter(g=>has(u,"flow",g.bg) && g.caps.includes("review")).map(g=>g.bg)})).filter(p=>p.bgs.length):[],
+      reviewerRoles:roleList(s).filter(r=>r.caps.includes("review")).map(({id,name})=>({id,name})),
       audienceCatalog: audienceCatalog(c),
       managementBgs: [...new Set(u.grants.map((g) => g.bg))],
-      pendingUploads: pendingUploads(s, u),
-      approvalRules: (s.approvalRules || []).filter((r) => manages(u, r)).sort((a, b) => a.priority - b.priority),
-      drafts: s.drafts.filter((m) => manages(u, m)).map((m) => ({ ...m, files: m.files.map(fileInfo) })),
+      pendingUploads: has(u,"edit")?pendingUploads(s, u):[],
+      approvalRules: (s.approvalRules || []).filter((r) => any(u,["edit","flow"],r.bg)).sort((a, b) => a.priority - b.priority),
+      drafts: s.drafts.filter((m) => any(u,[...materialCaps,"diagnose"],m.bg)).map((m) => ({ ...m, files: m.files.map(fileInfo) })),
       published: s.materials
-        .filter((m) => manages(u, m))
+        .filter((m) => any(u,[...materialCaps,"demand","diagnose","kitEdit"],m.bg))
         .map((m) => ({
           ...m,
           proofNeedsReview:
@@ -175,13 +183,13 @@ export function snapshot(s, c) {
           files: m.files.map(fileInfo),
         })),
       queue: s.requests.filter(
-        (r) => u.role === "reviewer" || u.grants.some((g) => g.bg === r.bg),
+        (r) => any(u,["demand","assign"],r.bg),
       ),
       library: s.library,
-      packDrafts: s.packDrafts.filter((d) => manages(u, d)),
-      packs: s.packs.filter((d) => manages(u, d)),
+      packDrafts: s.packDrafts.filter((d) => any(u,["review","kitEdit"],d.bg)),
+      packs: s.packs.filter((d) => any(u,["review","kitEdit"],d.bg)),
       audit: s.audit
-        .filter((e) => e.bg ? manages(u, e) : e.name === u.name || u.role === "reviewer")
+        .filter((e) => e.bg ? has(u,"audit",e.bg) : u.root)
         .slice(0, 60),
     };
   }
@@ -192,9 +200,15 @@ function listTags(a) {
   return (Array.isArray(a) ? a : []).slice(0, 12).map(brief).filter(Boolean);
 }
 export async function change(s, c, env, a) {
-  const u = c.u,
-    p = prefs(s, u),
-    op = a.op;
+  const op=a.op;
+  if(["saveRole","assignRoles","syncDirectory"].includes(op)) return administer(s,c,env,a);
+  const caps={fav:"personal",list:"personal",checklist:"personal",read:"personal",request:"request",reply:"request",
+    claim:"demand",assign:"assign",ask:"demand",decline:"demand",deliver:"demand",library:"catalog",savePack:"kitEdit",
+    packReview:"review",save:"edit",withdraw:"withdraw",review:"review",saveFlow:"flow",reassignStep:"flow"};
+  const cap=caps[op];
+  need(cap && has(c.u,cap),403,"当前账号缺少此操作权限");
+  const u=permittedUser(c.u,cap), p=prefs(s,u);
+  const recipientUser=async id=>effective(s,await recipient(c,env,id),c,env);
   if (op === "fav" || op === "list") {
     const k = op;
     if (p[k].includes(a.id)) p[k] = p[k].filter((x) => x !== a.id);
@@ -273,7 +287,7 @@ export async function change(s, c, env, a) {
   const request = (id) => {
     const r = s.requests.find((r) => r.id === id);
     need(
-      r && (u.role === "reviewer" || u.grants.some((g) => g.bg === r.bg)),
+      r && u.grants.some(g=>g.bg===r.bg),
       404,
       "未找到需求",
     );
@@ -286,7 +300,7 @@ export async function change(s, c, env, a) {
       const m = s.materials.find((x) => x.id === a.mid);
       need(m && manages(u, m), 404, "资料不可用");
       need(
-        deliver(s, r, m, await recipient(c, env, r.by), a.files || []),
+        deliver(s, r, m, await recipientUser(r.by), a.files || []),
         409,
         "所选资料不符合提交人的权限或用途",
       );
@@ -294,7 +308,6 @@ export async function change(s, c, env, a) {
       return;
     }
     if (op === "assign") {
-      need(u.role === "reviewer", 403, "分派需要运营权限");
       r.owner = brief(a.owner);
       need(r.owner, 400, "填写负责人");
       r.status = "处理中";
@@ -312,13 +325,25 @@ export async function change(s, c, env, a) {
     note(s, r, u, str(a.comment, 1500) || "已认领");
     return;
   }
+  if (op === "reassignStep") {
+    const d=s.drafts.find(m=>m.id===a.id && m.state==="待审核" && has(u,"flow",m.bg));
+    need(d && str(a.comment) && (d.approval?.token || "")===a.token,409,"请重新打开当前节点并填写原因");
+    const target=await recipientUser(a.to);
+    need(target && target.id!==d.author && has(target,"review",d.bg),400,"请选择可审核该 BG 的其他人员");
+    if(!d.approval) d.approval={name:"标准发布审核",ruleId:"转派",index:0,steps:[{name:"发布审核"}]};
+    const step=currentStep(d), before=step.reviewerName || "该 BG 审核人";
+    Object.assign(step,{roleId:"",reviewerId:target.id,reviewerName:target.name});
+    d.approval.token=uid();
+    d.approval.reassigned=true;
+    log(s,u,"转派 "+step.name,d.id,{materialId:d.mid,title:d.title,bg:d.bg,note:before+" → "+target.name+" · "+str(a.comment)});
+    return;
+  }
   if (op === "saveFlow") {
     const rule = await saveFlow(s, c, env, a);
     log(s, u, (rule.active ? "保存审批流程 " : "停用审批流程 ") + rule.name, rule.id, { bg: rule.bg });
     return;
   }
   if (op === "library") {
-    need(u.role === "reviewer", 403, "需要运营权限");
     const name = brief(a.name);
     need(name, 400, "名称不能为空");
     if (a.kind === "category") {
@@ -388,7 +413,6 @@ export async function change(s, c, env, a) {
     need(
       d &&
         manages(u, d) &&
-        u.role === "reviewer" &&
         u.id !== d.author &&
         d.state === "待审核",
       403,
@@ -543,7 +567,7 @@ export async function change(s, c, env, a) {
       owner: u.name,
       updated: day(),
     };
-    d.approval = a.submit ? startApproval(s, d) : null;
+    d.approval = a.submit ? await startApproval(s, d,c,env) : null;
     if (a.coverId) {
       const f = s.uploads?.[a.coverId];
       need(
@@ -581,7 +605,7 @@ export async function change(s, c, env, a) {
     );
     const flow = d.approval;
     // Legacy clients can still process the built-in one-step route.
-    if (flow?.ruleId || a.stepToken)
+    if (flow?.ruleId || flow?.reassigned || a.stepToken)
       need(flow && a.stepToken === flow.token, 409, "审批节点已更新，请重新打开资料");
     need(typeof a.approve === "boolean", 400, "请选择审批结果");
     const stage = currentStep(d).name;
@@ -649,7 +673,7 @@ export async function change(s, c, env, a) {
     s.drafts = s.drafts.filter((x) => x !== d);
     if (prev) notifySaved(s, m, "关注的资料已换版，请核对更新内容");
     if (req) {
-      if (deliver(s, req, m, await recipient(c, env, req.by), deliveryFiles))
+      if (deliver(s, req, m, await recipientUser(req.by), deliveryFiles))
         note(s, req, u, "资料已发布并交付");
       else {
         req.status = "处理中";

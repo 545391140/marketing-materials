@@ -66,7 +66,7 @@ export async function identity(req, env) {
   return { u, ns, demo: true, fresh, workspaceMode: env.LOCAL_RUNTIME ? "local-isolated" : "isolated" };
 }
 export async function recipient(ctx, env, id) {
-  if (ctx.demo) return profiles[id];
+  if (ctx.demo) return Object.hasOwn(profiles,id) ? profiles[id] : null;
   if (ctx.u.id === id) return ctx.u;
   if (!env.PC_DIRECTORY_URL || !env.PC_SERVICE_TOKEN) return null;
   const url = new URL(env.PC_DIRECTORY_URL);

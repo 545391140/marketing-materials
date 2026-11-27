@@ -1569,3 +1569,8 @@ textarea {
 .history-event { border-left: 2px solid #d3ddeb; padding: 8px 16px; overflow-wrap: anywhere; }
 .history-event small { display: block; margin-top: 4px; color: #526273; }
 .history-event p { margin: 6px 0; }
+
+.rail-group {display:grid; gap:2px; margin-bottom:12px}
+.rail-group > small {padding:8px 12px 4px; color:#596679; font-size:.78rem; font-weight:650}
+.cap-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+.system-admin .row-item {width:100%}

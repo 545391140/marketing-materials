@@ -1,3 +1,4 @@
+import { has } from "./permissions.js";
 // Rules apply within a BG. The lowest active priority takes precedence.
 export const defaultFlow = {
   name: "标准发布审核", steps: [{ name: "发布审核", reviewerId: "", reviewerName: "" }],
@@ -17,6 +18,6 @@ export function currentStep(draft) {
 
 export function canReview(draft, user) {
   const step = currentStep(draft);
-  return draft.state === "待审核" && user.role === "reviewer" && user.id !== draft.author &&
-    !!step && (!step.reviewerId || step.reviewerId === user.id);
+  return draft.state === "待审核" && has(user,"review",draft.bg) && user.id !== draft.author &&
+    !!step && (!step.roleId || user.scopes.some((s)=>s.bg===draft.bg && s.ids.includes(step.roleId))) && (!step.reviewerId || step.reviewerId === user.id);
 }

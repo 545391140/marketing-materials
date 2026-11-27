@@ -22,6 +22,7 @@ export const profiles = {
     org: "企业网络 · 一线销售",
     grants: [{ bg: "EBG", region: "华东", channel: "员工" }],
   },
+  admin: { id:"admin", name:"平台管理员", role:"sales", org:"平台运营", grants:[{ bg:"EBG", region:"华东", channel:"员工" }] },
   editor: {
     id: "editor",
     name: "周宁",
