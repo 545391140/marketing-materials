@@ -1253,3 +1253,44 @@ test("anonymous customer links pin selected files and enforce live rights for ev
   await h.user("editor");await h.act({op:"withdraw",id:mid,comment:"停止外发"});
   assert.equal((await view(long)).status,404);
 });
+
+test("verified PC account migration preserves legacy ownership, OA notices use employee IDs and current tasks",async t=>{
+  const {profiles}=await import("../server/seed.js");
+  const {sendPortalNotifications}=await import("../server/portal-notifications.js");
+  const env={...backend(),PC_SESSION_URL:"https://pc.test/session",PC_DIRECTORY_URL:"https://pc.test/directory",
+    PC_SERVICE_TOKEN:"pc-token",DEMO_MODE:"false"};
+  const row={...profiles.sales,id:"E123",pcAccountId:profiles.sales.id,job:"售前"};
+  t.mock.method(globalThis,"fetch",async url=>{
+    const address=new URL(url);
+    if(address.hostname==="pc.test") return Response.json(address.pathname==="/session"?profiles.sales:profiles.partner);
+    if(address.pathname==="/session") return Response.json({id:row.id});
+    return Response.json(row);
+  });
+  const h=harness(env);
+  h.jar.set("pc_session","sales-session");
+  await h.act({op:"fav",id:"campus"});
+  Object.assign(env,{OA_SESSION_URL:"https://oa.test/session",OA_DIRECTORY_URL:"https://oa.test/directory",
+    OA_SERVICE_TOKEN:"oa-token",OA_MESSAGE_URL:"https://oa.test/message",PC_MESSAGE_URL:"https://pc.test/message",
+    PORTAL_ORIGIN:"https://portal.test",ADMIN_ORIGIN:"https://admin.test",OA_ADMIN_IDS:row.id});
+  h.jar.set("oa_session","employee-session");
+  const upgraded=await (await h.get("/oa/api/portal/state")).json();
+  assert.deepEqual(upgraded.prefs.fav,["campus"]);
+  assert.equal(upgraded.user.id,profiles.sales.id);
+  assert.equal((await (await h.get("/pc/api/portal/state")).json()).user.root,false);
+  const {readState,update}=await import("../server/db.js");
+  await update(env,"portal",s=>{
+    s.notices=[
+      {key:"employee-event",to:profiles.sales.id,msg:"流程配置",studio:true,flowBg:"EBG"},
+      {key:"partner-event",to:profiles.partner.id,msg:"处理回复"},
+      {key:"obsolete",to:profiles.sales.id,msg:"旧审批",studio:true,draftId:"closed",stepToken:"old"},
+    ];
+  });
+  const sent=[];
+  const send=async(url,options)=>{sent.push({url:url.href,data:JSON.parse(options.body)});return new Response(null,{status:204});};
+  await sendPortalNotifications(env,send);
+  await sendPortalNotifications(env,send);
+  assert.equal(sent.length,2);
+  assert(sent.some(x=>x.url===env.OA_MESSAGE_URL && x.data.recipientId===row.id && x.data.link===env.ADMIN_ORIGIN+"/?flow=EBG"));
+  assert(sent.some(x=>x.url===env.PC_MESSAGE_URL && x.data.recipientId===profiles.partner.id));
+  assert((await readState(env,"portal")).s.notices.find(n=>n.key==="obsolete").portalSkipped);
+});

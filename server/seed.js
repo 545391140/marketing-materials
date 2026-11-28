@@ -6,22 +6,24 @@ export const profiles = {
     role: "partner",
     org: "星河科技 · 渠道伙伴",
     grants: [
-      { bg: "EBG", region: "华东", country: "CN", channel: "经销" },
-      { bg: "EBG", region: "东南亚", country: "TH", channel: "经销" },
+      { bg: "EBG", region: "华东", country: "CN", channel: "经销", companyId:"star" },
+      { bg: "EBG", region: "东南亚", country: "TH", channel: "经销", companyId:"star" },
     ],
   },
   partnerVn: {
     id: "partnerVn", name: "越南集成商", en: "Vietnam Integrator", role: "partner",
-    org: "演示伙伴 · 越南", grants: [{bg: "EBG", region: "东南亚", country: "VN", channel: "集成"}],
+    org: "演示伙伴 · 越南", grants: [{bg: "EBG", region: "东南亚", country: "VN", channel: "集成",companyId:"vn-integrator"}],
   },
   sales: {
     id: "sales",
     name: "陈朗",
     en: "Lang Chen",
     role: "sales",
-    org: "企业网络 · 一线销售",
+    org: "企业网络 · 一线销售", job:"销售",
     grants: [{ bg: "EBG", region: "华东", channel: "员工" }],
   },
+  presales:{id:"presales",name:"售前顾问",role:"sales",job:"售前",org:"企业网络 · 售前",grants:[{bg:"EBG",region:"东南亚",country:"TH",channel:"员工"}]},
+  aftersales:{id:"aftersales",name:"售后工程师",role:"sales",job:"售后",org:"企业网络 · 售后",grants:[{bg:"EBG",region:"东南亚",country:"TH",channel:"员工"}]},
   admin: { id:"admin", name:"平台管理员", role:"sales", org:"平台运营", grants:[{ bg:"EBG", region:"华东", channel:"员工" }] },
   editor: {
     id: "editor",

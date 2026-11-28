@@ -21,6 +21,7 @@ async function upstream(req, env, path) {
     if (req.headers.has(key)) h.set(key, req.headers.get(key));
   const names = [
     env.PC_COOKIE_NAME || "pc_session",
+    env.OA_COOKIE_NAME || "oa_session",
     "material_profile",
     "material_space",
   ];
@@ -32,6 +33,7 @@ async function upstream(req, env, path) {
       .filter((v) => names.includes(v.split("=")[0]))
       .join("; ")
   );
+  h.set("x-material-entry", "oa");
   if (write) h.set("origin", base.origin);
   if (env.PORTAL_SERVICE_TOKEN)
     h.set("OAI-Sites-Authorization", "Bearer " + env.PORTAL_SERVICE_TOKEN);
@@ -71,7 +73,7 @@ async function upstream(req, env, path) {
 function denied(access, data) {
   const choices = data.demo
     ? (data.choices || []).filter(
-        (p) => !["partner", "partnerVn", "sales"].includes(p.id)
+        (p) => !["partner", "partnerVn", "sales", "presales", "aftersales"].includes(p.id)
       )
     : [];
   const options = choices

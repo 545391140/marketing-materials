@@ -2,7 +2,7 @@ import { has } from "../shared/permissions.js";
 import { roleList, people, effective } from "./roles.js";
 import { need, manages, str, uid } from "./access.js";
 import { recipient } from "./db.js";
-import { selectFlow } from "../shared/approval.js";
+import { selectFlow, canReview } from "../shared/approval.js";
 
 export async function saveFlow(s, ctx, env, input) {
   const rules = s.approvalRules || (s.approvalRules = []);
@@ -25,6 +25,8 @@ export async function saveFlow(s, ctx, env, input) {
     400, "请配置 1 至 10 个审批节点");
   const steps = [];
   for (const step of input.steps) {
+    const nodeBg = str(step?.bg) || bg;
+    need(has(ctx.u,"flow",nodeBg),403,"需要节点所属 BG 的流程配置权限");
     const label = str(step?.name, 100), reviewerId = str(step?.reviewerId);
     need(label, 400, "每个审批节点都要填写名称");
     const roleId=str(step?.roleId);
@@ -33,12 +35,12 @@ export async function saveFlow(s, ctx, env, input) {
     let reviewerName = role?.name || "";
     if (reviewerId && input.active) {
       const reviewer = await recipient(ctx, env, reviewerId);
-      need(reviewer && has(effective(s,reviewer,ctx,env),"review",bg), 400, "审批账号须为该 BG 的有效审核人：" + reviewerId);
+      need(reviewer && has(effective(s,reviewer,ctx,env),"review",nodeBg), 400, "审批账号须为该 BG 的有效审核人：" + reviewerId);
       reviewerName = reviewer.name;
     } else if (reviewerId) {
       reviewerName = prior?.steps.find((s) => s.reviewerId === reviewerId)?.reviewerName || reviewerId;
     }
-    steps.push({ name: label, reviewerId, reviewerName, roleId });
+    steps.push({ ...(nodeBg!==bg ? {bg:nodeBg} : {}), name: label, reviewerId, reviewerName, roleId });
   }
   const rule = { id: prior?.id || uid(), version: (prior?.version || 0) + 1,
     bg, priority, product, solution, type, name, active: input.active, steps };
@@ -48,7 +50,8 @@ export async function saveFlow(s, ctx, env, input) {
 }
 
 export async function startApproval(s, draft, ctx, env) {
-  const rule = selectFlow(s.approvalRules || [], draft);
+  const rule = selectFlow(s.approvalRules || [], draft, fallbackEnabled(s,draft.bg,env));
+  need(rule,409,"未命中启用流程，请联系归属 BG 的流程管理员");
   need(!rule.steps.some((step) => step.reviewerId === draft.author), 409,
     "提交人与流程中指定的审核人相同，请调整分工后再提交");
   for (const step of rule.steps) {
@@ -57,8 +60,8 @@ export async function startApproval(s, draft, ctx, env) {
     function eligible(p,step) {
       if(!p || p.id===draft.author) return false;
       const u=effective(s,p,ctx,env);
-      return has(u,"review",draft.bg) && (!step.roleId ||
-        u.scopes.some(g=>g.bg===draft.bg && g.ids.includes(step.roleId)));
+      return has(u,"review",step.bg || draft.bg) && (!step.roleId ||
+        u.scopes.some(g=>g.bg===(step.bg || draft.bg) && g.ids.includes(step.roleId)));
     }
     let found=false;
     for(const id of ids) {
@@ -69,4 +72,19 @@ export async function startApproval(s, draft, ctx, env) {
   }
   return { ruleId: rule.id || "", version: rule.version || 0, name: rule.name,
     steps: rule.steps.map((step) => ({ ...step })), index: 0, token: uid() };
+}
+
+export function fallbackEnabled(s,bg,env) {
+  return s.flowDefaults?.find(setting=>setting.bg===bg)?.enabled ?? !env.OA_SESSION_URL;
+}
+export async function notifyReviewers(s,d,ctx,env) {
+  if (!env.OA_SESSION_URL || d.state !== "待审核") return;
+  const candidates=people(s,ctx).filter(p=>p.active!==false && canReview(d,effective(s,p,ctx,env)));
+  for (const p of candidates) {
+    const account=await recipient(ctx,env,p.id);
+    if (!account || !canReview(d,effective(s,account,ctx,env))) continue;
+    const key=[d.id,d.approval.token,p.id].join(":");
+    if(!s.notices.some(n=>n.key===key)) s.notices.unshift({key,to:p.id,studio:true,draftId:d.id,
+      stepToken:d.approval.token,msg:"待审批 · "+d.title,date:new Date().toISOString().slice(0,10),read:false});
+  }
 }

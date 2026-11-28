@@ -4,7 +4,7 @@ import { searchContext, languages } from "../shared/discovery.js";
 import { systemView, administer } from "./system.js";
 import { effective, permittedUser, roleList, people } from "./roles.js";
 import { has, any, materialCaps } from "../shared/permissions.js";
-import { saveFlow, startApproval } from "./approval.js";
+import { saveFlow, startApproval, fallbackEnabled, notifyReviewers } from "./approval.js";
 import { canReview, currentStep } from "../shared/approval.js";
 import {
   need,
@@ -31,7 +31,7 @@ const publicPerson = (u) => ({
   id: u.id,
   name: u.name,
   role: u.role,
-  org: u.org,
+  org: u.org, job:u.job,
 });
 function notifySaved(s, m, msg, excluded = new Set()) {
   for (const [to, p] of Object.entries(s.users))
@@ -50,7 +50,7 @@ const note = (s, r, user, action) => {
   r.updated = stamp();
 };
 const log = (s, u, action, id, details = {}) =>
-  s.audit.unshift({ name: u.name, action, id, date: stamp(), ...details });
+  s.audit.unshift({ name: u.name, actorId:u.actorId || u.id, companyId:u.companyId, action, id, date: stamp(), ...details });
 const message = (s, r, msg) =>
   s.notices.unshift({
     to: r.by,
@@ -142,7 +142,9 @@ export function snapshot(s, c, env, includeAdmin = true) {
       deliveryFiles: undefined, parentId:undefined,
     }));
   const out = {
-    user: {...publicPerson(u),scopes:u.scopes,root:u.root},
+    user: {...publicPerson(u),scopes:u.scopes,root:u.root, job:u.job},
+    identity:c.source && {source:c.source, companyId:u.actorId ? u.companyId : "", employee:!!c.actor.employeeId,
+      companies:(c.actor.delegations || []).map(({companyId,name})=>({id:companyId,name:name || companyId}))},
     affiliations: u.grants.filter(g=>has(u,"request",g.bg)).map(({bg,region,country,channel})=>({bg,region,country,channel})),
     shares: myShares(s,u,env.SHARE_ORIGIN),
     opportunities: has(u,"personal") ? opportunities(s,u,materials) : [],
@@ -152,7 +154,7 @@ export function snapshot(s, c, env, includeAdmin = true) {
     packs:packs.filter(k=>has(u,"kits",k.bg)),
     requests:has(u,"personal")?requests:[],
     notices: has(u,"personal") ? [
-      ...s.notices.filter(n => n.to === u.id).map(({ replacementId, ...n }) => {
+      ...s.notices.filter(n => n.to === u.id && (!n.stepToken || (s.drafts.some(d=>d.id===n.draftId && d.approval?.token===n.stepToken && canReview(d,u))))).map(({ replacementId, ...n }) => {
         const replacement = replacementId && materials.find(m => m.id === replacementId);
         return replacement ? { ...n, mid: replacement.id, msg: n.msg + "。替代资料：《" + replacement.title + "》" } : n;
       }),
@@ -175,14 +177,15 @@ export function snapshot(s, c, env, includeAdmin = true) {
       system:any(u,["users","roles","diagnose"])?systemView(s,c,env):null,
       stalled:s.drafts.filter(d=>d.state==="待审核" && has(u,"flow",d.bg) && !people(s,c).some(p=>
         p.active!==false && canReview(d,effective(s,p,c,env)))).map(d=>d.id),
-      reviewerChoices:c.demo && has(u,"flow") ? people(s,c).map(p=>({id:p.id,name:p.name,bgs:effective(s,p,c,env).scopes.filter(g=>has(u,"flow",g.bg) && g.caps.includes("review")).map(g=>g.bg)})).filter(p=>p.bgs.length):[],
+      reviewerChoices:has(u,"flow") ? people(s,c).filter(p=>p.active!==false).map(p=>({id:p.id,name:p.name,bgs:effective(s,p,c,env).scopes.filter(g=>has(u,"flow",g.bg) && g.caps.includes("review")).map(g=>g.bg)})).filter(p=>p.bgs.length):[],
       reviewerRoles:roleList(s).filter(r=>r.caps.includes("review")).map(({id,name})=>({id,name})),
       audienceCatalog: audienceCatalog(c),
       accountOptions:directoryOptions(s,c,env),
       managementBgs: [...new Set(u.grants.map((g) => g.bg))],
       pendingUploads: has(u,"edit")?pendingUploads(s, u):[],
+      flowDefaults:[...new Set(u.grants.map(g=>g.bg))].map(bg=>({bg,enabled:fallbackEnabled(s,bg,env),version:s.flowDefaults?.find(x=>x.bg===bg)?.version || 0})),
       approvalRules: (s.approvalRules || []).filter((r) => any(u,["edit","flow"],r.bg)).sort((a, b) => a.priority - b.priority),
-      drafts: s.drafts.filter((m) => any(u,[...materialCaps,"diagnose"],m.bg)).map((m) => ({ ...m, files: m.files.map(fileInfo) })),
+      drafts: s.drafts.filter((m) => (any(u,[...materialCaps,"diagnose"],m.bg) || canReview(m,u))).map((m) => ({ ...m, files: m.files.map(fileInfo) })),
       published: s.materials
         .filter((m) => any(u,[...materialCaps,"demand","diagnose","kitEdit"],m.bg))
         .map((m) => ({
@@ -312,7 +315,7 @@ export async function releaseDue(env, ns) {
       const u = d.releaseApproval;
       const prev = s.materials.find(m => m.id === d.mid);
       const proof = d.proofId && s.materials.find(m => m.id === d.proofId);
-      const ctx = { demo: !env.PC_SESSION_URL, u: { id: "" } };
+      const ctx = { demo: !env.OA_SESSION_URL && !env.PC_SESSION_URL, u: { id: "" } };
       const reviewer = people(s, ctx).find(p => p.id === u.id);
       if ((prev?.version || 0) !== d.baseVersion || (d.expires && d.expires < day()) ||
           (d.proofId && (!proof || proof.version !== d.proofVersion || !reviewer || !visible(proof, effective(s, reviewer, ctx, env), s.materials)))) {
@@ -351,7 +354,7 @@ export async function change(s, c, env, a) {
   if(["saveRole","assignRoles","syncDirectory"].includes(op)) return administer(s,c,env,a);
   const caps={fav:"personal",list:"personal",checklist:"personal",read:"personal",request:"request",reply:"request",
     planDemand:"demand",mergeDemand:"demand",contentReview:"edit",claim:"demand",assign:"assign",ask:"demand",decline:"demand",deliver:"demand",library:"catalog",savePack:"kitEdit",
-    packReview:"review",save:"edit",cancelSchedule:"edit",withdraw:"withdraw",review:"review",saveFlow:"flow",reassignStep:"flow"};
+    packReview:"review",save:"edit",cancelSchedule:"edit",withdraw:"withdraw",review:"review",saveFlow:"flow",setDefaultFlow:"flow",reassignStep:"flow"};
   const cap=caps[op];
   need(cap && has(c.u,cap),403,"当前账号缺少此操作权限");
   const u=permittedUser(c.u,cap), p=prefs(s,u);
@@ -415,7 +418,7 @@ export async function change(s, c, env, a) {
       external: !!a.external,
       needDownload: !!a.needDownload,
       bg: subject?.bg || affiliation.bg || "未分派",
-      by: u.id,
+      by: u.id, actorId:u.actorId || u.id, companyId:u.companyId,
       name: u.name,
       owner: subject?.owner || "",
       status: "待受理",
@@ -527,14 +530,25 @@ export async function change(s, c, env, a) {
   if (op === "reassignStep") {
     const d=s.drafts.find(m=>m.id===a.id && m.state==="待审核" && has(u,"flow",m.bg));
     need(d && str(a.comment) && (d.approval?.token || "")===a.token,409,"请重新打开当前节点并填写原因");
+    need(has(u,"flow",currentStep(d).bg || d.bg),403,"需要当前节点 BG 的流程管理权限");
     const target=await recipientUser(a.to);
-    need(target && target.id!==d.author && has(target,"review",d.bg),400,"请选择可审核该 BG 的其他人员");
+    need(target && target.id!==d.author && has(target,"review",currentStep(d).bg || d.bg),400,"请选择可审核该 BG 的其他人员");
     if(!d.approval) d.approval={name:"标准发布审核",ruleId:"转派",index:0,steps:[{name:"发布审核"}]};
     const step=currentStep(d), before=step.reviewerName || "该 BG 审核人";
     Object.assign(step,{roleId:"",reviewerId:target.id,reviewerName:target.name});
     d.approval.token=uid();
     d.approval.reassigned=true;
+    await notifyReviewers(s,d,c,env);
     log(s,u,"转派 "+step.name,d.id,{materialId:d.mid,title:d.title,bg:d.bg,note:before+" → "+target.name+" · "+str(a.comment)});
+    return;
+  }
+  if (op === "setDefaultFlow") {
+    need(has(u,"flow",a.bg) && typeof a.enabled==="boolean",403,"不能修改此 BG 的默认流程");
+    const settings=s.flowDefaults ||= [], old=settings.find(x=>x.bg===a.bg);
+    need((old?.version || 0)===a.version,409,"配置已更新，请刷新");
+    const row={bg:a.bg,enabled:a.enabled,version:a.version+1};
+    if(old) Object.assign(old,row); else settings.push(row);
+    log(s,u,a.enabled?"启用标准发布审核":"停用标准发布审核",a.bg,{bg:a.bg});
     return;
   }
   if (op === "saveFlow") {
@@ -787,7 +801,18 @@ export async function change(s, c, env, a) {
       owner: owner.name,
       updated: day(),
     };
-    d.approval = a.submit ? await startApproval(s, d,c,env) : null;
+    d.approval = null;
+    if (a.submit) {
+      try { d.approval=await startApproval(s,d,c,env); }
+      catch(e) {
+        if (e.status!==409 || (!env.OA_SESSION_URL && !s.flowDefaults?.some(x=>x.bg===bg))) throw e;
+        d.state="草稿";
+        d.reason=e.message;
+        for(const person of people(s,c).filter(p=>p.active!==false && has(effective(s,p,c,env),"flow",bg))) {
+          s.notices.unshift({key:uid(),to:person.id,studio:true,flowBg:bg,msg:"送审受阻 · "+d.title+" · "+e.message,date:day(),read:false});
+        }
+      }
+    }
     if (a.coverId) {
       const f = s.uploads?.[a.coverId];
       need(
@@ -805,21 +830,21 @@ export async function change(s, c, env, a) {
     for (const id of [...files.map((f) => f.id), d.coverId])
       if (s.uploads?.[id]) s.uploads[id].filed = true;
     need(new Set(files.map(slotId)).size===files.length,400,"同一个附件位置不能重复使用");
-    if (old) Object.assign(old, d, { reason: "" });
+    if (old) Object.assign(old, d, { reason:d.reason || "" });
     else s.drafts.unshift(d);
     if (assigned) {
-      assigned.status = a.submit ? "审核中" : "处理中";
+      assigned.status = d.approval ? "审核中" : "处理中";
       assigned.owner = u.name;
       note(s, assigned, u, assigned.status);
     }
-    log(s, u, d.state, d.id, { materialId: d.mid, title: d.title, bg: d.bg, note: d.approval?.name });
-    return;
+    await notifyReviewers(s,d,c,env);
+    log(s, u, d.state, d.id, { materialId: d.mid, title: d.title, bg: d.bg, note: d.reason || d.approval?.name });
+    return d.reason ? {blocked:d.reason,draftId:d.id} : undefined;
   }
   if (op === "review") {
     const d = s.drafts.find((x) => x.id === a.id);
     need(
       d &&
-        manages(u, d) &&
         canReview(d, u),
       403,
       "需由另一名审核人审核",
@@ -846,6 +871,7 @@ export async function change(s, c, env, a) {
     if (flow && flow.index < flow.steps.length - 1) {
       flow.index += 1;
       flow.token = uid();
+      await notifyReviewers(s,d,c,env);
       log(s, u, "节点通过：" + stage, d.id, { materialId: d.mid, title: d.title,
         bg: d.bg, note: [flow.name, brief(a.comment)].filter(Boolean).join(" · ") });
       return;

@@ -5,7 +5,7 @@ import { api } from "./api.js";
 import { sendPortalNotifications } from "./portal-notifications.js";
 import { releaseDue } from "./service.js";
 async function maintenance(env, receipt = false) {
-  const ns = env.PC_SESSION_URL ? "portal" : env.LOCAL_WORKSPACE || env.SHARED_DEMO_SPACE;
+  const ns = (env.PC_SESSION_URL || env.OA_SESSION_URL) ? "portal" : env.LOCAL_WORKSPACE || env.SHARED_DEMO_SPACE;
   if (!ns) return null;
   const {released,notified}=await releaseDue(env,ns);
   const dispatch=await sendPortalNotifications(env);
@@ -19,13 +19,23 @@ export default {
     ctx.waitUntil(maintenance(env));
   },
   async fetch(req, env, ctx) {
-    const path = new URL(req.url).pathname;
+    const url = new URL(req.url);
+    let path = url.pathname;
+    const entry = /^\/(oa|pc)(?:\/as\/([^/]+))?\/(.*)$/.exec(path);
+    if (entry && env.OA_SESSION_URL) {
+      if (!entry[3]) return serveAsset(assets,"/");
+      if (!entry[3].startsWith("api/")) return new Response(null,{status:404});
+      url.pathname = path = "/"+entry[3];
+      req = new Request(url,req);
+      req.headers.set("x-material-entry",entry[1]);
+      req.headers.set("x-material-company",entry[2] || "");
+    }
     if(path==="/internal/maintenance") {
       // Only enable this ingress behind the owner-private Sites dispatch gate.
       if(env.PRIVATE_SITE_MAINTENANCE!=="enabled" || env.LOCAL_RUNTIME) return new Response(null,{status:404});
       if(!["GET","POST"].includes(req.method) || req.headers.get("x-material-task")!=="release-due") return new Response(null,{status:403});
       if(req.method==="GET"){
-        const ns=env.PC_SESSION_URL?"portal":env.SHARED_DEMO_SPACE;
+        const ns=(env.PC_SESSION_URL || env.OA_SESSION_URL)?"portal":env.SHARED_DEMO_SPACE;
         const receipt=ns && await env.BUCKET.get("maintenance/"+ns);
         return Response.json(receipt?JSON.parse(await receipt.text()):null,{headers:{"cache-control":"no-store"}});
       }
@@ -40,8 +50,7 @@ export default {
       });
       if (
         result.ok &&
-        env.PC_SESSION_URL &&
-        env.PC_MESSAGE_URL &&
+        (env.PC_MESSAGE_URL || env.OA_MESSAGE_URL) &&
         (req.method === "POST" || path === "/api/inbox")
       ) {
         const delivery = sendPortalNotifications(env).catch(() =>
@@ -52,10 +61,14 @@ export default {
       }
       return result;
     }
+    if (env.OA_SESSION_URL && ["/entry/pc","/entry/oa"].includes(path)) {
+      return new Response(null,{status:303,headers:{location:"/"+path.slice(7)+"/","cache-control":"no-store"}});
+    }
     if(path==="/manage"){
       if(!env.ADMIN_ORIGIN)return new Response("管理端地址尚未配置",{status:503});
       const target=new URL("/",env.ADMIN_ORIGIN);
-      if(!env.PC_SESSION_URL && env.DEMO_PAIRING==="true"){
+      for(const key of ["review","flow"]) if(url.searchParams.has(key)) target.searchParams.set(key,url.searchParams.get(key));
+      if(!env.PC_SESSION_URL && !env.OA_SESSION_URL && env.DEMO_PAIRING==="true"){
         const c=await identity(req,{...env,DEMO_MODE:env.DEMO_MODE ?? "true"});
         const headers=new Headers({"content-type":"text/html;charset=utf-8","cache-control":"no-store","referrer-policy":"no-referrer"});
         if(c.fresh)headers.append("set-cookie","material_space="+c.ns+"; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000");

@@ -1,5 +1,5 @@
 import { need, uid, str, visible, active, fileAllowed } from "./access.js";
-import { safeProfile, recipient } from "./db.js";
+import { safeProfile, directoryEmployee, recipient } from "./db.js";
 import { roleList, people, effective, remember, isRoot } from "./roles.js";
 import { allowed, ALL, values } from "../shared/audience.js";
 import { front, permissions, has } from "../shared/permissions.js";
@@ -34,6 +34,8 @@ export function systemView(s, c, env) {
     accounts,
     roles: roleList(s),
     cursor: s.directoryCursor || "",
+    oaCursor:s.oaDirectoryCursor || "",
+    canSyncOa:u.root && !c.demo && !!env.OA_SESSION_URL && !!env.OA_USERS_URL,
     canSync: u.root && !c.demo && !!env.PC_USERS_URL,
   };
 }
@@ -77,15 +79,14 @@ export async function administer(s, c, env, a) {
     return;
   }
   if (a.op === "syncDirectory") {
-    need(
-      u.root && !c.demo && env.PC_USERS_URL && env.PC_SERVICE_TOKEN,
-      403,
-      "用户目录未配置或无同步权限"
-    );
-    const url = new URL(env.PC_USERS_URL);
-    if (s.directoryCursor) url.searchParams.set("cursor", s.directoryCursor);
+    const source = a.source === "OA" ? "OA" : "PC";
+    const cursor = source === "OA" ? "oaDirectoryCursor" : "directoryCursor";
+    const endpoint = env[source+"_USERS_URL"], token=env[source+"_SERVICE_TOKEN"];
+    need(u.root && !c.demo && endpoint && token && (source==="PC" || env.OA_SESSION_URL),403,"用户目录未配置或无同步权限");
+    const url = new URL(endpoint);
+    if (s[cursor]) url.searchParams.set("cursor", s[cursor]);
     const res = await fetch(url, {
-      headers: { authorization: "Bearer " + env.PC_SERVICE_TOKEN },
+      headers: { authorization: "Bearer " + token },
       redirect: "error",
     });
     need(res.ok, 502, "门户用户目录同步失败");
@@ -96,13 +97,14 @@ export async function administer(s, c, env, a) {
       502,
       "无效的目录分页数据"
     );
-    for (const p of data.users)
-      remember(s, {
-        ...safeProfile({ ...p, active: true }),
-        active: p.active !== false,
-      });
-    s.directoryCursor = data.next_cursor || "";
-    log(s, u, "同步门户用户 " + data.users.length + " 人", "directory");
+    for (const p of data.users) {
+      if (source === "PC" && env.OA_SESSION_URL && p.role !== "partner") continue;
+      const row = source === "OA" ? directoryEmployee({...p, active:true}, s)
+        : safeProfile({...p,active:true});
+      remember(s,{...row,active:p.active!==false});
+    }
+    s[cursor] = data.next_cursor || "";
+    log(s,u,"同步 "+source+" 目录 "+data.users.length+" 人","directory");
     return;
   }
   need(has(u, "users", a.bg) || u.root, 403, "无该 BG 用户管理权限");
@@ -166,7 +168,7 @@ function mismatch(u, rules, cap = "browse") {
     bg: "BG",
     region: "区域",
     country: "签约国家",
-    channel: "伙伴类型",
+    channel: "伙伴类型", job:"员工岗位", companyId:"伙伴企业",
   };
   const grants = u.grants.filter((g) => has(u, "browse", g.bg));
   let closest;
@@ -177,12 +179,12 @@ function mismatch(u, rules, cap = "browse") {
           (k) =>
             rule[k] !== undefined &&
             rule[k] !== ALL &&
-            !values(rule[k]).includes(grant[k])
+            !values(rule[k]).includes(grant[k] || (k === "job" ? u.job : undefined))
         )
         .map((k) => labels[k]);
       if (
         !allowed({ ...u, grants: [grant] }, [
-          { ...rule, bg: ALL, region: ALL, country: ALL, channel: ALL },
+          { ...rule, bg: ALL, region: ALL, country: ALL, channel: ALL, job:ALL, companyId:ALL },
         ])
       )
         missing.push("账号身份");

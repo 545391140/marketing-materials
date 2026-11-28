@@ -4,11 +4,11 @@ export const defaultFlow = {
   name: "标准发布审核", steps: [{ name: "发布审核", reviewerId: "", reviewerName: "" }],
 };
 
-export function selectFlow(rules, material) {
+export function selectFlow(rules, material, fallback = true) {
   const matches = rules.filter((rule) =>
     rule.active && rule.bg === material.bg &&
     ["product", "solution", "type"].every((key) => !rule[key] || rule[key] === material[key]));
-  return matches.sort((a, b) => a.priority - b.priority)[0] || defaultFlow;
+  return matches.sort((a, b) => a.priority - b.priority)[0] || (fallback ? defaultFlow : null);
 }
 
 export function currentStep(draft) {
@@ -18,6 +18,7 @@ export function currentStep(draft) {
 
 export function canReview(draft, user) {
   const step = currentStep(draft);
-  return draft.state === "待审核" && has(user,"review",draft.bg) && user.id !== draft.author &&
-    !!step && (!step.roleId || user.scopes.some((s)=>s.bg===draft.bg && s.ids.includes(step.roleId))) && (!step.reviewerId || step.reviewerId === user.id);
+  const bg = step?.bg || draft.bg;
+  return draft.state === "待审核" && has(user,"review",bg) && user.id !== draft.author &&
+    !!step && (!step.roleId || user.scopes.some((s)=>s.bg===bg && s.ids.includes(step.roleId))) && (!step.reviewerId || step.reviewerId === user.id);
 }

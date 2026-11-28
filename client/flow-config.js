@@ -1,7 +1,7 @@
 import { has } from "../shared/permissions.js";
 import template from "./flow-config.html";
 
-const step = () => ({ roleId:"", name: "", reviewerId: "" });
+const step = () => ({ bg:"", roleId:"", name: "", reviewerId: "" });
 export default {
   template,
   props: ["admin", "user", "demo", "choices", "busy"],

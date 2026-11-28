@@ -1,9 +1,10 @@
 import {createLink,customerFiles,shareRoute} from "./shares.js";
-import { effective, remember, knownProfile } from "./roles.js";
+import { sessionUser, remember, knownProfile } from "./roles.js";
+import { canReview } from "../shared/approval.js";
 import { has, any, materialCaps } from "../shared/permissions.js";
 import { gapReport } from "./operations.js";
 import { diagnose, audiencePreview } from "./system.js";
-import { identity, readState, update } from "./db.js";
+import { identity, bindPc, readState, update } from "./db.js";
 import { audienceCatalog } from "./audience-catalog.js";
 import { uid, need, staff, visible, manages, fileAllowed, active, validRules, subset } from "./access.js";
 import { snapshot, change, materialHistory, releaseDue } from "./service.js";
@@ -105,15 +106,24 @@ export async function api(req, env) {
     ctx = await identity(req, env);
     const raw=ctx.u, ns=ctx.ns;
     let stored=await releaseDue(env,ns);
-    if(!ctx.demo && JSON.stringify(stored.s.directory?.find(p=>p.id===raw.id))!==JSON.stringify(knownProfile(raw))) {
-      await update(env,ns,s=>remember(s,raw));
+    const directoryUser = ctx.actor || raw;
+    if(!ctx.demo && JSON.stringify(stored.s.directory?.find(p=>p.id===directoryUser.id))!==JSON.stringify(knownProfile(directoryUser))) {
+      await update(env,ns,s=>remember(s,directoryUser));
       stored=await readState(env,ns);
     }
-    const scoped=(s)=>({...ctx,u:effective(s,raw,ctx,env),raw});
+    const scoped=(s)=>({...ctx,u:sessionUser(s,raw,ctx,env),raw});
     ctx=scoped(stored.s);
     const u=ctx.u;
     let response;
-    if (req.method === "GET" && path === "/api/admin/access") {
+    if (req.method === "POST" && path === "/api/identity/bind") {
+      await bindPc(req,env,ctx);
+      response = json({ok:true});
+    } else if (req.method === "POST" && path === "/api/identity/context") {
+      const {companyId} = await req.json();
+      need(ctx.actor?.employeeId && typeof companyId === "string" &&
+        (!companyId || ctx.actor.delegations.some(d=>d.companyId===companyId)),403,"没有该企业的代办授权");
+      response = json({path:"/"+ctx.source.toLowerCase()+"/"+(companyId ? "as/"+encodeURIComponent(companyId)+"/" : "")});
+    } else if (req.method === "GET" && path === "/api/admin/access") {
       response=json({allowed:!!staff(u),demo:ctx.demo, choices:ctx.demo?Object.values(profiles).map(({id,name,org})=>({id,name,org})):[]},staff(u)?200:403);
     } else if (req.method === "GET" && ["/api/state","/api/portal/state","/api/admin/state"].includes(path)) {
       if(path==="/api/admin/state") need(staff(u),403,"当前账号没有资料管理权限");
@@ -153,12 +163,12 @@ export async function api(req, env) {
       response=json(await diagnose(stored.s,ctx,env,await req.json()));
     } else if (req.method === "POST" && path === "/api/shares") {
       need(env.SHARE_ORIGIN,503,"尚未配置客户访问地址");
-      if (!ctx.demo) need(env.PC_DIRECTORY_URL && env.PC_SERVICE_TOKEN,503,"需要配置门户目录以实时校验分享人权限");
+      if (!ctx.demo) need((u.employeeId ? env.OA_DIRECTORY_URL && env.OA_SERVICE_TOKEN : env.PC_DIRECTORY_URL && env.PC_SERVICE_TOKEN),503,"需要配置门户目录以实时校验分享人权限");
       response=json(await createLink(env,ctx,scoped,await req.json()));
     } else if (req.method === "POST" && path === "/api/actions") {
       const a = await req.json();
-      await update(env, ns, (s) => change(s, scoped(s), env, a));
-      response = json({ ok: true });
+      const result=await update(env, ns, (s) => change(s, scoped(s), env, a));
+      response=json(result?.blocked ? {ok:false, ...result} : {ok:true});
     } else if (req.method === "POST" && path === "/api/upload") {
       need(has(u,"edit"), 403, "无上传权限");
       need(
@@ -269,7 +279,7 @@ export async function api(req, env) {
       const draft = url.searchParams.get("draft") === "1";
       const m = (draft ? s.drafts : s.materials).find((x) => x.id === mid);
       need(
-        m && (draft ? any(u,materialCaps,m.bg) : visible(m, u, s.materials)),
+        m && (draft ? (any(u,materialCaps,m.bg) || canReview(m,u)) : visible(m, u, s.materials)),
         404,
         "资料不可用",
       );
@@ -285,7 +295,7 @@ export async function api(req, env) {
           need(fileAllowed(account, f.download, "download"), 403, "没有下载权限");
           state.audit.unshift({
             downloadMid: mid, version: m.version, userId: u.id,
-            name: u.name,
+            name: u.name, actorId:u.actorId || u.id, companyId:u.companyId, source:ctx.source, bg:current.bg,
             action: "下载附件",
             id: f.id,
             date: new Date().toISOString(),

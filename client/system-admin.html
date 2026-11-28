@@ -1,7 +1,7 @@
 <div class="system-admin">
 <template v-if="section==='用户管理'">
   <template v-if="!person">
-    <div class="tools-row"><input v-model="q" placeholder="搜索姓名、用户 ID 或组织"><button v-if="system.canSync" class="btn" :disabled="busy" @click="save({op:'syncDirectory'})">{{system.cursor?'继续同步下一页':'同步门户用户'}}</button></div>
+    <div class="tools-row"><input v-model="q" placeholder="搜索姓名、用户 ID 或组织"><button v-if="system.canSync" class="btn" :disabled="busy" @click="save({op:'syncDirectory'})">{{system.cursor?'继续同步下一页':'同步 PC 用户'}}</button><button v-if="system.canSyncOa" class="btn" :disabled="busy" @click="save({op:'syncDirectory',source:'OA'})">{{system.oaCursor?'继续同步 OA 下一页':'同步 OA 员工'}}</button></div>
     <button class="row-item" v-for="p in rows" :key="p.id" @click="select(p)"><span class="grow"><strong>{{p.name}}</strong><small>{{p.id}} · {{p.org}} · {{p.active===false?'已停用':'有效'}}</small></span><span>{{p.scopes.map(s=>s.bg).join('、')}}</span><ic n="ChevronRight"/></button>
     <p v-if="!rows.length" class="empty">没有匹配的用户</p>
   </template><form v-else class="form" @submit.prevent="save({op:'assignRoles',userId:person.id,bg,ids,version:person.version})">
@@ -37,5 +37,5 @@
   <button class="row-item" v-for="d in pending" @click="transfer=d;reason='';to=''"><span class="grow"><strong>{{d.title}}</strong><small>{{d.bg}} · {{d.approval ? d.approval.steps[d.approval.index].name : '发布审核'}} · {{admin.stalled.includes(d.id)?'目录内无可处理人员':'等待审核'}}</small></span>转派</button>
   <p v-if="!pending.length" class="empty">暂无在途审批</p>
   <form v-if="transfer" class="form" @submit.prevent="save({op:'reassignStep',id:transfer.id,token:transfer.approval ? transfer.approval.token : '',to,comment:reason})"><h3>{{transfer.title}}</h3>
-  <label>接收人门户 ID<input required v-model.trim="to"></label><label>转派原因<textarea required v-model.trim="reason"></textarea></label><button class="btn red" :disabled="busy">确认转派</button></form>
+  <label>接收人业务账号 ID<input required v-model.trim="to"></label><label>转派原因<textarea required v-model.trim="reason"></textarea></label><button class="btn red" :disabled="busy">确认转派</button></form>
 </template></div>

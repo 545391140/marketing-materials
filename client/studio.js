@@ -43,7 +43,7 @@ export default {
   components: { audienceCheck,reviewRecord,gapPanel,ruleEditor, reviewScope, flowConfig, systemAdmin },
   data() {
     return {
-      sim: { role: "伙伴", bg: "EBG", region: "东南亚", country: "TH", channel: "经销" },
+      sim: { role: "伙伴", job:"售前", companyId:"", bg: "EBG", region: "东南亚", country: "TH", channel: "经销" },
       section: "资料管理",
       filter: "",
       q: "",
@@ -81,9 +81,9 @@ export default {
     a() {
       return this.d.admin;
     },
-    matchedFlow() { return selectFlow(this.a.approvalRules, this.form); },
+    matchedFlow() { return selectFlow(this.a.approvalRules, this.form, this.a.flowDefaults.find(x=>x.bg===this.form.bg)?.enabled) || {name:"未配置匹配流程",steps:[]}; },
     reviewQueue() {
-      return this.a.drafts.filter((d) => d.state === "待审核" && this.can("review",d.bg) &&
+      return this.a.drafts.filter((d) => d.state === "待审核" && (this.can("review",d.bg) || canReview(d,this.d.user)) &&
         (!this.assignedOnly || canReview(d, this.d.user)));
     },
     reviewKits() {
@@ -156,6 +156,12 @@ export default {
     typ() {
       return this.a.library.types.find((t) => t.name === this.form.type);
     },
+  },
+  mounted() {
+    const params=new URLSearchParams(location.search);
+    const draft=this.a.drafts.find(d=>d.id===params.get("review"));
+    if(draft && canReview(draft,this.d.user)) { this.sectionTo("发布审核"); this.inspect(draft); }
+    else if(params.has("flow") && this.can("flow",params.get("flow"))) this.sectionTo("审批流程");
   },
   watch:{
     availableSections:{immediate:true,handler(list){

@@ -50,7 +50,7 @@ Vue.component("document-preview", {
         const lib = await import("/pdf.min.mjs");
         lib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
         // Only the reconstructed single-page PDF is exposed to the renderer.
-        const fontBase = this.view.fontBase || "/api/preview-fonts/";
+        const fontBase = this.view.fontBase || new URL("./preview-fonts/",this.view.layout.url).href;
         loadingTask = lib.getDocument({ url: this.src, isEvalSupported: false,
           useWasm: false, cMapUrl: fontBase, cMapPacked: true,
           standardFontDataUrl: fontBase });

@@ -45,21 +45,23 @@ export const ruleEditor = {
   },
   template: `<div class="rule-editor"><fieldset class="scope-group" v-for="(r,i) in value" :key="i">
     <legend>授权组 {{i+1}}</legend><div class="scope-line">
-    <label>身份<select v-model="r.role"><option v-for="s in [...new Set(['全部','员工','伙伴',r.role])]" :value="s">{{s}}</option></select></label>
+    <label>身份<select v-model="r.role" @change="$delete(r,'job');$delete(r,'companyId');$set(r,'channel','全部')"><option v-for="s in [...new Set(['全部','员工','伙伴',r.role])]" :value="s">{{s}}</option></select></label>
     <label>BG<input v-model.trim="r.bg"></label><label>区域<input v-model.trim="r.region"></label>
     <scope-picker label="国家" :value="countriesOf(r)" :options="catalog.countries" @input="$set(r,'country',$event)"/>
-    <scope-picker label="伙伴类型" v-model="r.channel" :options="catalog.partnerTypes"/>
+    <label v-if="r.role==='员工'">岗位<select :value="r.job || '全部'" @change="$set(r,'job',$event.target.value)"><option v-for="job in [...new Set(['全部','销售','售前','售后',r.job].filter(Boolean))]">{{job}}</option></select></label>
+    <label v-if="r.role==='伙伴'">伙伴企业 ID<input :value="r.companyId" placeholder="留空包含全部企业" @input="$set(r,'companyId',$event.target.value.trim())"></label>
+    <scope-picker v-if="r.role!=='员工' || r.channel!=='全部'" label="伙伴类型" v-model="r.channel" :options="catalog.partnerTypes"/>
     </div><button type="button" class="text-btn" @click="remove(i)">移除本组</button></fieldset>
     <p v-if="!value.length" class="muted">无人获准</p>
     <button type="button" class="text-btn" @click="add" :disabled="value.length>=25"><ic n="Plus" :size="14"/>添加授权组</button></div>`,
 };
 
 function describe(rule, catalog) {
-  return [rule.role, "BG "+rule.bg, "区域 "+rule.region,
+  return [rule.role, ...(rule.job ? ["岗位 "+rule.job] : []), ...(rule.companyId ? ["企业 "+rule.companyId] : []), "BG "+rule.bg, "区域 "+rule.region,
     ...[["country", "国家"], ["channel", "伙伴类型"]].map(([key, label]) =>
       label+" "+labels(optionsFor(catalog, key), formValue(rule, key)))].join(" · ");
 }
-const signature = (r) => JSON.stringify([r.role, r.bg, r.region,
+const signature = (r) => JSON.stringify([r.role, r.job, r.companyId, r.bg, r.region,
   [...values(countriesOf(r))].sort(), [...values(r.channel)].sort()]);
 
 export const reviewScope = {

@@ -74,7 +74,12 @@ export function validRules(v, catalog, prior = []) {
     need(r && [ALL, "员工", "伙伴", ...roles].includes(r.role) &&
       [r.bg, r.region].every((x) => typeof x === "string" && x.trim() && x.length <= 60),
       400, "请完整选择身份、BG 和区域");
-    return { role: r.role, bg: r.bg.trim(), region: r.region.trim(),
+    for (const key of ["job","companyId"]) need(r[key] == null || (typeof r[key] === "string" && r[key].length <= 120),400,"岗位或企业标识无效");
+    need((!r.job || r.job.trim()) && (!r.companyId || r.companyId.trim()),400,"岗位和企业标识不能仅含空格");
+    need(!r.job || r.job === ALL || r.role === "员工",400,"请在员工授权组设置岗位");
+    need(!r.companyId || r.companyId === ALL || r.role === "伙伴",400,"请在伙伴授权组设置企业");
+    return { ...(r.job && r.job!==ALL ? {job:r.job.trim()} : {}),
+      ...(r.companyId && r.companyId!==ALL ? {companyId:r.companyId.trim()} : {}),role: r.role, bg: r.bg.trim(), region: r.region.trim(),
       country: selection(r.country === undefined ? ALL : r.country, "国家", countries, oldCountries),
       channel: selection(r.channel, "伙伴类型", channels, oldChannels) };
   });

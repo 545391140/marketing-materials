@@ -53,7 +53,7 @@ export async function createLink(env,ctx,scoped,input) {
     const link={id,token,mid:m.id,title:m.title,owner:u.id,version:m.version,files,downloads,
       created:new Date(now).toISOString(),expiresAt};
     (s.customerShares ||= []).unshift(link);
-    s.audit.unshift({id,materialId:m.id,bg:m.bg,version:m.version,name:u.name,action:"创建客户分享",date:link.created});
+    s.audit.unshift({id,materialId:m.id,bg:m.bg,version:m.version,name:u.name,actorId:u.actorId || u.id,companyId:u.companyId,action:"创建客户分享",date:link.created});
     // The index alone cannot open a link. The committed workspace record is also required.
     await env.BUCKET.put("share-index/"+token,ctx.ns);
   });
@@ -65,7 +65,7 @@ export function closeLink(s,u,id){
   if(link.revoked) return;
   link.revoked=new Date().toISOString();
   const m=s.materials.find(x=>x.id===link.mid);
-  s.audit.unshift({id,materialId:link.mid,bg:m?.bg,version:link.version,name:u.name,action:"关闭客户分享",date:link.revoked});
+  s.audit.unshift({id,materialId:link.mid,bg:m?.bg,version:link.version,name:u.name,actorId:u.actorId || u.id,companyId:u.companyId,action:"关闭客户分享",date:link.revoked});
 }
 export function updateSharedVersions(s,m) {
   const notified=new Set();
@@ -85,7 +85,7 @@ export function updateSharedVersions(s,m) {
 export async function customerFiles(s,token,ns,env) {
   const link=s.customerShares?.find(x=>x.token===token);
   need(link && isOpen(link),404,"分享已失效或不可用");
-  const ctx={demo:!env.PC_SESSION_URL,u:{id:""}};
+  const ctx={demo:!env.OA_SESSION_URL && !env.PC_SESSION_URL,u:{id:""}};
   need(ctx.demo ? ns!=="portal" : ns==="portal",404,"分享不可用");
   const user=await recipient(ctx,env,link.owner);
   const files=available(s,link,effective(s,user,ctx,env));

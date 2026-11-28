@@ -12,7 +12,7 @@ db.exec(
   "CREATE TABLE IF NOT EXISTS objects (key TEXT PRIMARY KEY, tag TEXT, data BLOB)"
 );
 const demo =
-  !process.env.PC_SESSION_URL && (process.env.DEMO_MODE ?? "true") === "true";
+  !process.env.OA_SESSION_URL && !process.env.PC_SESSION_URL && (process.env.DEMO_MODE ?? "true") === "true";
 const sharedWorkspace = demo ? localWorkspace(db, process.argv.slice(2)) : "";
 if (sharedWorkspace === null) {
   db.close();

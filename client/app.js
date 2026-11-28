@@ -7,7 +7,7 @@ import Vue from "vue";
 import Vuex from "vuex";
 import VueI18n from "vue-i18n";
 import en from "./i18n.js";
-import { call, card, date, fileUrl, tasks } from "./shared.js";
+import { call, card, date, fileUrl, tasks, entryPath } from "./shared.js";
 import shell from "./shell.html";
 import overlays from "./overlays.html";
 Vue.use(Vuex);
@@ -216,6 +216,7 @@ const app = new Vue({
     },
   },
   methods: {
+    entryPath,
     tx(s) {
       return this.locale === "en" && Object.hasOwn(en, s)
         ? String(this.$t(s))
@@ -412,7 +413,13 @@ const app = new Vue({
     },
     async openNotice(n) {
       await this.action({ op: "read", key: n.key }, "");
-      if(n.studio && this.staff){location.assign("/manage");return;}
+      if(n.studio && this.staff) {
+        const query=new URLSearchParams();
+        if(n.draftId) query.set("review",n.draftId);
+        if(n.flowBg) query.set("flow",n.flowBg);
+        location.assign("/manage?"+query);
+        return;
+      }
       if (n.rid) this.showReq(n.rid);
       else {
         const m = this.d.materials.find((x) => x.id === n.mid);
@@ -438,6 +445,14 @@ const app = new Vue({
       }
     },
     canFront(key){return has(this.d?.user,key);},
+    async switchCompany(companyId) {
+      try { const result=await call("identity/context",{companyId}); location.assign(result.path); }
+      catch(e) { this.toast(e.message); }
+    },
+    async bindPcAccount() {
+      try { await call("identity/bind",{}); this.toast("PC 员工账号已关联"); }
+      catch(e) { this.toast(e.message); }
+    },
     async profile(id) {
       this.account = false;
       try {

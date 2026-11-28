@@ -9,7 +9,7 @@
         <small>{{rule.steps.map(s=>s.name).join(' → ')}}</small></div>
       <span class="badge">{{rule.active?'启用':'停用'}}</span><button v-if="canFlow(rule.bg)" class="btn mini" @click="edit(rule)">编辑流程</button>
     </div>
-    <p class="notice">未匹配自定义流程的资料由归属 BG 的另一名审核人完成标准发布审核。</p>
+    <h3>未匹配流程时</h3><div class="manage-row" v-for="setting in admin.flowDefaults.filter(s=>canFlow(s.bg))" :key="setting.bg"><div class="grow"><strong>{{setting.bg}} · 标准发布审核</strong><small>{{setting.enabled?'由归属 BG 的另一位审核人审批':'保留草稿，等待配置流程'}}</small></div><button class="btn mini" :disabled="busy" @click="$root.action({op:'setDefaultFlow',...setting,enabled:!setting.enabled},'默认流程已更新')">{{setting.enabled?'停用':'启用'}}</button></div>
   </template>
   <form v-else class="form" @submit.prevent="save">
     <h3>{{form.id?'编辑流程':'新增流程'}}</h3>
@@ -24,10 +24,10 @@
     <h3>审批顺序</h3>
     <fieldset v-for="(s,i) in form.steps" :key="i" class="scope-group"><legend>第 {{i+1}} 步</legend>
       <div class="form-cols"><label>节点名称<input required maxlength="100" v-model.trim="s.name"></label>
-        <label>审批业务角色<select aria-label="审批业务角色" v-model="s.roleId" @change="s.reviewerId=''"><option value="">按账号或 BG</option><option v-for="r in admin.reviewerRoles" :value="r.id">{{r.name}}</option></select></label>
-        <label v-if="!s.roleId">审批账号<select v-if="demo" aria-label="审批账号" v-model="s.reviewerId"><option value="">该 BG 任一审核人</option>
-          <option v-for="p in admin.reviewerChoices.filter(p=>p.bgs.includes(form.bg))" :value="p.id">{{p.name}} · {{p.id}}</option></select>
-          <input v-else v-model.trim="s.reviewerId" placeholder="门户用户 ID，留空由该 BG 任一审核人处理"></label></div>
+        <label>节点审批 BG<select v-model="s.bg"><option value="">沿用归属 BG</option><option v-for="bg in admin.managementBgs.filter(bg=>canFlow(bg))">{{bg}}</option></select></label><label>审批业务角色<select aria-label="审批业务角色" v-model="s.roleId" @change="s.reviewerId=''"><option value="">按账号或 BG</option><option v-for="r in admin.reviewerRoles" :value="r.id">{{r.name}}</option></select></label>
+        <label v-if="!s.roleId">审批账号<select aria-label="审批账号" v-model="s.reviewerId"><option value="">该 BG 任一审核人</option>
+          <option v-for="p in admin.reviewerChoices.filter(p=>p.bgs.includes(s.bg || form.bg))" :value="p.id">{{p.name}} · {{p.id}}</option></select>
+          </label></div>
       <div class="action-row"><button type="button" class="btn mini" :disabled="i===0" @click="move(i,-1)">上移</button>
         <button type="button" class="btn mini" :disabled="i===form.steps.length-1" @click="move(i,1)">下移</button>
         <button type="button" class="btn mini" :disabled="form.steps.length===1" @click="form.steps.splice(i,1)">移除节点</button></div>

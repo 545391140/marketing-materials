@@ -87,8 +87,12 @@ new Vue({
       this.busy = true;
       this.err = "";
       try {
-        await call("actions", payload);
+        const result=await call("actions", payload);
         if (!(await this.refresh())) return false;
+        if(result.blocked) {
+          this.toast("已保留草稿 · "+result.blocked);
+          return true;
+        }
         this.toast(message);
         return true;
       } catch (e) {
