@@ -126,6 +126,7 @@ const en = {
   处理中: "In progress",
   待补充: "Needs info",
   审核中: "In review",
+  待定时发布: "Scheduled",
   已交付: "Delivered",
   已关闭: "Closed",
   行业: "Industry",

@@ -901,3 +901,109 @@ test("separate origins share the library and protect the management entry",async
   const foreign=new Request("https://admin.test/api/profile",{method:"POST",headers:{origin:"https://other.test","x-material-client":"hub"}});
   assert.equal((await adminWorker.fetch(foreign,adminEnv)).status,403);
 });
+
+test("scheduled releases wait for final approval and the deadline, then recall only actual version downloaders", async t => {
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ["Date"], now: start });
+  const env = { ...backend(), LOCAL_RUNTIME: true, LOCAL_WORKSPACE: "schedule-test" };
+  const h = harness(env);
+  await h.user("editor");
+  const data = new FormData();
+  data.append("file", new Blob(["投标附件内容"]), "投标附件.txt");
+  const upload = await (await h.get("/api/upload", data)).json();
+  const rules = [{ role: "伙伴", bg: "EBG", region: "东南亚", country: ["VN"], channel: ["集成"] }];
+  const save = { op: "save", title: "排期资料", summary: "越南投标材料", type: "客户案例",
+    cat: "园区网络", bg: "EBG", defaultView: rules, defaultDownload: rules,
+    files: [{ id: upload.id, inherit: true, usage: "可发客户" }], submit: true };
+  const publishAt = new Date(start + 60000).toISOString();
+  await h.act({ ...save, publishAt: "2026-12-03T10:00" }, 400);
+  await h.act({ ...save, publishAt, expires: "2020-01-01" }, 400);
+  await h.act({ ...save, publishAt });
+  const draft = (await h.data()).admin.drafts[0];
+  const url = "/api/file?mode=download&m=" + draft.mid + "&f=" + upload.id;
+  await h.user("reviewer");
+  await h.act({ op: "review", approve: true, id: draft.id });
+  assert.equal((await h.data()).admin.drafts[0].state, "待定时发布");
+  await h.user("editor");
+  await h.act({ ...save, id: draft.id }, 409);
+  await h.user("partnerVn");
+  await h.act({ op: "cancelSchedule", id: draft.id, publishAt }, 403);
+  t.mock.timers.setTime(start + 59999);
+  assert(!(await h.data()).materials.some(m => m.id === draft.mid));
+  assert.equal((await h.get(url)).status, 404);
+  t.mock.timers.setTime(start + 60000);
+  // Exercise the unattended handler before any visitor reads the library.
+  let job;
+  worker.scheduled({}, env, { waitUntil: work => { job = work; } });
+  await job;
+  const persisted = JSON.parse(await (await env.BUCKET.get("state/schedule-test")).text());
+  assert.equal(persisted.materials.find(m => m.id === draft.mid).version, 1);
+  assert.equal(await (await h.get(url)).text(), "投标附件内容");
+  assert.equal(await (await h.get(url)).text(), "投标附件内容");
+  await h.user("partner");
+  assert.equal((await h.get(url)).status, 404);
+  await h.user("editor");
+  const later = new Date(start + 120000).toISOString();
+  const revise = { ...save, mid: draft.mid, title: "第二版", publishAt: later };
+  await h.act(revise);
+  const second = (await h.data()).admin.drafts[0];
+  await h.user("reviewer");
+  await h.act({ op: "review", approve: true, id: second.id });
+  await h.user("partnerVn");
+  assert.equal((await h.data()).materials.find(m => m.id === draft.mid).title, save.title);
+  await h.user("editor");
+  await h.act({ op: "cancelSchedule", id: second.id, publishAt: later });
+  assert.equal((await h.data()).admin.drafts[0].state, "已退回");
+  // Schedule it again, then withdraw the live version before the next release.
+  await h.act({ ...revise, id: second.id });
+  await h.user("reviewer");
+  await h.act({ op: "review", approve: true, id: second.id });
+  await h.act({ op: "withdraw", id: draft.mid, version: 2, comment: "校对" }, 409);
+  await h.act({ op: "withdraw", id: draft.mid, version: 1, comment: "报价需校对", replacementId: "internal" });
+  t.mock.timers.setTime(start + 120000);
+  await h.user("partnerVn");
+  assert.equal((await h.get(url)).status, 404);
+  const notices = (await h.data()).notices.filter(n => n.msg.includes("停止使用"));
+  assert.equal(notices.length, 1);
+  assert.match(notices[0].msg, /v1.*报价需校对/);
+  assert(!notices[0].mid && !notices[0].replacementId);
+  await h.user("partner");
+  assert(!(await h.data()).notices.some(n => n.msg.includes("停止使用")));
+});
+
+test("late final approval releases immediately and scheduled demand delivery waits for publication", async t => {
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ["Date"], now: start });
+  const h = harness();
+  await h.data();
+  await h.act({ op: "request", title: "投标案例", purpose: "客户投标", external: true });
+  const req = (await h.data()).requests[0].id;
+  await h.user("editor");
+  const base = (await h.data()).admin.published.find(m => m.id === "retail");
+  const fileId = base.files[0].id;
+  const save = { ...base, op: "save", id: "", mid: base.id, submit: true, req,
+    deliveryFiles: [fileId], publishAt: new Date(start + 60000).toISOString() };
+  await h.act(save);
+  const draft = (await h.data()).admin.drafts[0];
+  await h.user("reviewer");
+  await h.act({ op: "review", approve: true, id: draft.id });
+  await h.user("partner");
+  assert.equal((await h.data()).requests[0].status, "待定时发布");
+  assert.equal((await h.data()).materials.find(m => m.id === base.id).version, base.version);
+  t.mock.timers.setTime(start + 60000);
+  const [a,b] = await Promise.all([h.data(), h.data()]);
+  for (const state of [a,b]) {
+    assert.equal(state.requests[0].status, "已交付");
+    assert.equal(state.requests[0].version, base.version + 1);
+    assert.equal(state.notices.filter(n => n.rid === req).length, 1);
+  }
+  await h.user("editor");
+  await h.act({ ...save, req: "", title: "尚未终审", publishAt: new Date(start + 120000).toISOString() });
+  const next = (await h.data()).admin.drafts[0];
+  t.mock.timers.setTime(start + 180000);
+  await h.user("partner");
+  assert(!(await h.data()).materials.some(m => m.title === "尚未终审"));
+  await h.user("reviewer");
+  await h.act({ op: "review", approve: true, id: next.id });
+  assert.equal((await h.data()).admin.published.find(m => m.id === base.id).version, base.version + 2);
+});

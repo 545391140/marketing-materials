@@ -3,9 +3,15 @@ import { identity } from "./db.js";
 import assets from "./built-assets.json";
 import { api } from "./api.js";
 import { sendPortalNotifications } from "./portal-notifications.js";
+import { releaseDue } from "./service.js";
+async function maintenance(env) {
+  const ns = env.PC_SESSION_URL ? "portal" : env.LOCAL_WORKSPACE || env.SHARED_DEMO_SPACE;
+  if (ns) await releaseDue(env, ns);
+  await sendPortalNotifications(env);
+}
 export default {
   scheduled(event, env, ctx) {
-    ctx.waitUntil(sendPortalNotifications(env));
+    ctx.waitUntil(maintenance(env));
   },
   async fetch(req, env, ctx) {
     const path = new URL(req.url).pathname;

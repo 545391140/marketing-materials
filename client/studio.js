@@ -27,6 +27,7 @@ const blank = () => ({
   proofId: "",
   support: "",
   expires: "",
+  publishAt: "",
   defaultView: rules(),
   defaultDownload: rules(),
   files: [],
@@ -47,6 +48,8 @@ export default {
       typeFilter: "",
       bgFilter: "",
       historyRows: null,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      replacementId: "",
       mine: false,
       assignedOnly: false,
       view: "",
@@ -129,7 +132,7 @@ export default {
         { title: "待整理附件", count: this.a.pendingUploads.length, section: "待整理附件", icon: "UploadCloud" },
         { title: "待受理需求", count: this.a.queue.filter((r) => r.status === "待受理").length, section: "需求池", filter: "待受理", icon: "Inbox" },
         { title: "待我审核", count: this.a.drafts.filter(d=>canReview(d,this.d.user)).length + this.a.packDrafts.filter(d=>d.state==="待审核" && d.author!==this.d.user.id && this.can("review",d.bg)).length, section: "发布审核", icon: "ShieldCheck" },
-        ...["已退回", "即将到期", "已过期", "证据待复核"].map((title) => ({
+        ...["待定时发布", "已退回", "即将到期", "已过期", "证据待复核"].map((title) => ({
           title, count: this.ledger.filter((m) => this.matchesState(m, title)).length,
           section: "资料管理", filter: title, icon: title === "已退回" ? "PenLine" : "Clock3",
         })),
@@ -163,6 +166,9 @@ export default {
       return this.$root.tx(v);
     },
     date,
+    releaseTime(value) {
+      return value ? new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "long" }) : "终审通过后立即发布";
+    },
     currentStep,
     canReview,
     action(a, msg) {
@@ -228,6 +234,10 @@ export default {
               : ""
             : m.id,
         };
+        if (isDraft && m.publishAt) {
+          const time = new Date(m.publishAt);
+          b.publishAt = new Date(time.getTime() - time.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        } else b.publishAt = "";
         b.files = b.files.map((x) => ({ ...x, inherit: !!x.inherit }));
       }
       if (req) {
@@ -310,7 +320,7 @@ export default {
         .split(/[,，]/)
         .map((s) => s.trim())
         .filter(Boolean);
-      if (await this.action({ ...this.form, op: "save", submit },
+      if (await this.action({ ...this.form, publishAt: this.form.publishAt ? new Date(this.form.publishAt).toISOString() : "", op: "save", submit },
         submit ? "已提交审核，请由另一位审核人到发布审核处理" : "已保存草稿，提交审核后才会进入审核队列")) {
         this.sectionTo("资料管理");
       } else this.localError = this.$root.err;
@@ -406,6 +416,7 @@ export default {
     withdraw(m) {
       this.review = m;
       this.comment = "";
+      this.replacementId = "";
       this.view = "withdraw";
     },
   },

@@ -106,6 +106,15 @@ function serve(handler, listenPort, env) {
     })
     .listen(listenPort, host);
 }
+let maintenanceRunning = false;
+setInterval(() => {
+  if (maintenanceRunning) return;
+  maintenanceRunning = true;
+  worker.scheduled(null, environment, {
+    waitUntil: task => task.catch(error => console.error("定时任务失败", error.message))
+      .finally(() => { maintenanceRunning = false; }),
+  });
+}, 5000).unref();
 serve(worker, port, environment);
 serve(adminWorker, adminPort, {
   ...environment,

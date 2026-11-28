@@ -20,7 +20,7 @@ import {
 } from "./access.js";
 import { audienceCatalog } from "./audience-catalog.js";
 import { profiles, taskNames } from "./seed.js";
-import { recipient } from "./db.js";
+import { recipient, readState, update } from "./db.js";
 const stamp = () => new Date().toISOString();
 const publicPerson = (u) => ({
   id: u.id,
@@ -28,9 +28,9 @@ const publicPerson = (u) => ({
   role: u.role,
   org: u.org,
 });
-function notifySaved(s, m, msg) {
+function notifySaved(s, m, msg, excluded = new Set()) {
   for (const [to, p] of Object.entries(s.users))
-    if (p.fav.includes(m.id) || p.list.includes(m.id))
+    if (!excluded.has(to) && (p.fav.includes(m.id) || p.list.includes(m.id)))
       s.notices.unshift({
         key: uid(),
         to,
@@ -144,7 +144,10 @@ export function snapshot(s, c, env, includeAdmin = true) {
     packs:packs.filter(k=>has(u,"kits",k.bg)),
     requests:has(u,"personal")?requests:[],
     notices: has(u,"personal") ? [
-      ...s.notices.filter((n) => n.to === u.id),
+      ...s.notices.filter(n => n.to === u.id).map(({ replacementId, ...n }) => {
+        const replacement = replacementId && materials.find(m => m.id === replacementId);
+        return replacement ? { ...n, mid: replacement.id, msg: n.msg + "。替代资料：《" + replacement.title + "》" } : n;
+      }),
       ...expiryNotices(materials, p),
     ] : [],
     prefs: !has(u,"personal") ? {fav:[],list:[],deadline:"",notes:""} : {
@@ -200,12 +203,104 @@ const brief = (a) => str(a, 240);
 function listTags(a) {
   return (Array.isArray(a) ? a : []).slice(0, 12).map(brief).filter(Boolean);
 }
+const scheduled = "待定时发布";
+function publicationTime(input, expires) {
+  if (!input) return "";
+  need(typeof input === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(input) &&
+    Number.isFinite(Date.parse(input)), 400, "发布时间须包含日期、时间和时区");
+  const iso = new Date(input).toISOString();
+  need(!expires || iso.slice(0, 10) <= expires, 400, "发布时间晚于资料有效期");
+  return iso;
+}
+function linkedRequest(s, d) {
+  return s.requests.find(r => r.id === d.req && !["已交付", "已关闭"].includes(r.status));
+}
+function stopSchedule(s, d, u, reason) {
+  d.state = "已退回";
+  d.reason = reason;
+  d.publishAt = "";
+  delete d.releaseApproval;
+  d.approval = null;
+  const req = linkedRequest(s, d);
+  if (req) {
+    req.status = "处理中";
+    note(s, req, u, reason);
+  }
+  log(s, u, "取消定时发布", d.id, { materialId: d.mid, title: d.title, bg: d.bg, note: reason });
+}
+async function publishApproved(s, d, u, stageNote, comment, recipientUser) {
+  const prev = s.materials.find(m => m.id === d.mid);
+  const req = linkedRequest(s, d);
+  const {
+    approval, publishAt, releaseApproval,
+    state,
+    reason,
+    author,
+    mid,
+    baseVersion,
+    req: rid,
+    deliveryFiles,
+    ...meta
+  } = d;
+  const m = {
+    ...meta,
+    id: mid,
+    published: true,
+    version: baseVersion + 1,
+    updated: day(),
+  };
+  s.materials = [m, ...s.materials.filter((x) => x.id !== mid)];
+  s.drafts = s.drafts.filter((x) => x !== d);
+  if (prev) notifySaved(s, m, "关注的资料已换版，请核对更新内容");
+  if (req) {
+    if (deliver(s, req, m, await recipientUser(req.by), deliveryFiles))
+      note(s, req, u, "资料已发布并交付");
+    else {
+      req.status = "处理中";
+      note(s, req, u, "需另备符合用途的版本");
+    }
+  }
+  log(s, u, "审核发布 v" + m.version, m.id, {
+    materialId: m.id, title: m.title, bg: m.bg, version: m.version,
+    note: [stageNote, m.revisionNote, comment].filter(Boolean).join(" · "),
+    owner: m.owner, filenames: m.files.map((f) => f.name),
+  });
+}
+export async function releaseDue(env, ns) {
+  const stored = await readState(env, ns);
+  const due = d => d.state === scheduled && Date.parse(d.publishAt) <= Date.now();
+  if (!stored.s.drafts.some(due)) return stored;
+  await update(env, ns, async s => {
+    for (const d of s.drafts.filter(due).sort((a,b) => a.publishAt.localeCompare(b.publishAt))) {
+      const u = d.releaseApproval;
+      const prev = s.materials.find(m => m.id === d.mid);
+      const proof = d.proofId && s.materials.find(m => m.id === d.proofId);
+      const ctx = { demo: !env.PC_SESSION_URL, u: { id: "" } };
+      const reviewer = people(s, ctx).find(p => p.id === u.id);
+      if ((prev?.version || 0) !== d.baseVersion || (d.expires && d.expires < day()) ||
+          (d.proofId && (!proof || proof.version !== d.proofVersion || !reviewer || !visible(proof, effective(s, reviewer, ctx, env), s.materials)))) {
+        stopSchedule(s, d, u, "资料版本、有效期或引用证据已变化，请复核后重新送审");
+        continue;
+      }
+      await publishApproved(s, d, u, u.stageNote, u.comment,
+        async id => {
+          try {
+            return effective(s, await recipient(ctx, env, id), ctx, env);
+          } catch {
+            // Publication can proceed. Delivery stays assigned until recipient access can be checked.
+            return null;
+          }
+        });
+    }
+  });
+  return readState(env, ns);
+}
 export async function change(s, c, env, a) {
   const op=a.op;
   if(["saveRole","assignRoles","syncDirectory"].includes(op)) return administer(s,c,env,a);
   const caps={fav:"personal",list:"personal",checklist:"personal",read:"personal",request:"request",reply:"request",
     claim:"demand",assign:"assign",ask:"demand",decline:"demand",deliver:"demand",library:"catalog",savePack:"kitEdit",
-    packReview:"review",save:"edit",withdraw:"withdraw",review:"review",saveFlow:"flow",reassignStep:"flow"};
+    packReview:"review",save:"edit",cancelSchedule:"edit",withdraw:"withdraw",review:"review",saveFlow:"flow",reassignStep:"flow"};
   const cap=caps[op];
   need(cap && has(c.u,cap),403,"当前账号缺少此操作权限");
   const u=permittedUser(c.u,cap), p=prefs(s,u);
@@ -369,7 +464,7 @@ export async function change(s, c, env, a) {
   if (op === "savePack") {
     const old = s.packDrafts.find((d) => d.id === a.id);
     need(
-      !old || (manages(u, old) && old.state !== "待审核"),
+      !old || (manages(u, old) && !["待审核", scheduled].includes(old.state)),
       409,
       "草稿不可编辑",
     );
@@ -444,11 +539,18 @@ export async function change(s, c, env, a) {
     log(s, u, "发布场景包", id);
     return;
   }
+  if (op === "cancelSchedule") {
+    const d = s.drafts.find(x => x.id === a.id);
+    need(d && manages(u, d), 403, "无权取消定时发布");
+    need(d.state === scheduled && a.publishAt === d.publishAt, 409, "发布计划已变更，请刷新");
+    stopSchedule(s, d, u, "编辑已取消定时发布，修改后请重新送审");
+    return;
+  }
   if (op === "save") {
     const old = s.drafts.find((x) => x.id === a.id),
       base = a.mid && s.materials.find((m) => m.id === a.mid);
     need(
-      !old || (manages(u, old) && old.state !== "待审核"),
+      !old || (manages(u, old) && !["待审核", scheduled].includes(old.state)),
       409,
       "草稿不可编辑",
     );
@@ -555,6 +657,7 @@ export async function change(s, c, env, a) {
         typ.fields.map((k) => [k, str(a.fields?.[k], 500)]),
       ),
       expires: checkDate(a.expires),
+      publishAt: publicationTime(a.publishAt, a.expires),
       bg,
       defaultView: defV,
       defaultDownload: defD,
@@ -611,11 +714,7 @@ export async function change(s, c, env, a) {
     need(typeof a.approve === "boolean", 400, "请选择审批结果");
     const stage = currentStep(d).name;
     const stageNote = flow?.ruleId ? flow.name + " · " + stage : "";
-    const req = d.req
-      ? s.requests.find(
-          (r) => r.id === d.req && !["已交付", "已关闭"].includes(r.status),
-        )
-      : null;
+    const req = linkedRequest(s, d);
     if (!a.approve) {
       need(brief(a.comment), 400, "请填写退回原因");
       d.state = "已退回";
@@ -652,48 +751,36 @@ export async function change(s, c, env, a) {
       "资料已有新版本，请从新版重新编辑",
     );
     need(!d.expires || d.expires >= day(), 409, "资料已过期");
-    const {
-      approval,
-      state,
-      reason,
-      author,
-      mid,
-      baseVersion,
-      req: rid,
-      deliveryFiles,
-      ...meta
-    } = d;
-    const m = {
-      ...meta,
-      id: mid,
-      published: true,
-      version: baseVersion + 1,
-      updated: day(),
-    };
-    s.materials = [m, ...s.materials.filter((x) => x.id !== mid)];
-    s.drafts = s.drafts.filter((x) => x !== d);
-    if (prev) notifySaved(s, m, "关注的资料已换版，请核对更新内容");
-    if (req) {
-      if (deliver(s, req, m, await recipientUser(req.by), deliveryFiles))
-        note(s, req, u, "资料已发布并交付");
-      else {
-        req.status = "处理中";
-        note(s, req, u, "需另备符合用途的版本");
+    if (d.publishAt && Date.parse(d.publishAt) > Date.now()) {
+      need(!s.drafts.some(x => x !== d && x.mid === d.mid && x.state === scheduled), 409, "此资料已有待定时发布的版本");
+      d.state = scheduled;
+      if (req) {
+        req.status = scheduled;
+        note(s, req, u, "终审通过，等待定时发布");
       }
+      d.releaseApproval = { name: u.name, id: u.id, stageNote, comment: brief(a.comment) };
+      log(s, u, "终审通过，等待定时发布", d.id, { materialId: d.mid, title: d.title, bg: d.bg, note: d.publishAt });
+      return;
     }
-    log(s, u, "审核发布 v" + m.version, m.id, {
-      materialId: m.id, title: m.title, bg: m.bg, version: m.version,
-      note: [stageNote, m.revisionNote, brief(a.comment)].filter(Boolean).join(" · "),
-      owner: m.owner, filenames: m.files.map((f) => f.name),
-    });
+    await publishApproved(s, d, u, stageNote, brief(a.comment), recipientUser);
     return;
   }
   if (op === "withdraw") {
     const m = s.materials.find((x) => x.id === a.id);
     need(m && manages(u, m), 403, "无权下架");
     need(brief(a.comment), 400, "请填写下架原因");
+    need(m.published && (a.version == null || a.version === m.version), 409, "发布版本已变化，请刷新");
+    const replacement = a.replacementId && s.materials.find(x => x.id === a.replacementId);
+    need(!a.replacementId || (replacement && replacement.id !== m.id && active(replacement) && manages(u, replacement)), 400, "替代资料不可用");
     m.published = false;
-    notifySaved(s, m, "清单或收藏中的资料已下架");
+    for (const d of s.drafts.filter(x => x.mid === m.id && x.state === scheduled))
+      stopSchedule(s, d, u, "当前版本已下架，定时发布已取消");
+    const downloaders = new Set(s.audit.filter(e => e.action === "下载附件" && e.downloadMid === m.id &&
+      e.version === m.version).map(e => e.userId));
+    for (const to of downloaders)
+      s.notices.unshift({ key: uid(), to, msg: "请停止使用已下载的《" + m.title + "》v" + m.version +
+        "。下架原因：" + brief(a.comment), replacementId: replacement?.id, date: day(), read: false });
+    notifySaved(s, m, "清单或收藏中的资料已下架", downloaders);
     log(s, u, "下架：" + brief(a.comment), m.id, { materialId: m.id, title: m.title, bg: m.bg });
     return;
   }

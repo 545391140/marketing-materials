@@ -4,7 +4,7 @@ import { diagnose } from "./system.js";
 import { identity, readState, update } from "./db.js";
 import { audienceCatalog } from "./audience-catalog.js";
 import { uid, need, staff, visible, manages, fileAllowed, active, validRules, subset } from "./access.js";
-import { snapshot, change, materialHistory } from "./service.js";
+import { snapshot, change, materialHistory, releaseDue } from "./service.js";
 import { profiles } from "./seed.js";
 import { inspect, mimes } from "./files.js";
 import pdfs from "./sample-pdf.json";
@@ -38,7 +38,7 @@ export async function api(req, env) {
     }
     ctx = await identity(req, env);
     const raw=ctx.u, ns=ctx.ns;
-    let stored=await readState(env,ns);
+    let stored=await releaseDue(env,ns);
     if(!ctx.demo && JSON.stringify(stored.s.directory?.find(p=>p.id===raw.id))!==JSON.stringify(knownProfile(raw))) {
       await update(env,ns,s=>remember(s,raw));
       stored=await readState(env,ns);
@@ -202,7 +202,12 @@ export async function api(req, env) {
           body = o.body;
         }
         await update(env, ns, (state) => {
+          const current = state.materials.find(x => x.id === mid);
+          const account = scoped(state).u;
+          need(current && current.version === m.version && visible(current, account, state.materials), 404, "资料不可用");
+          need(fileAllowed(account, f.download, "download"), 403, "没有下载权限");
           state.audit.unshift({
+            downloadMid: mid, version: m.version, userId: u.id,
             name: u.name,
             action: "下载附件",
             id: f.id,
