@@ -1574,3 +1574,8 @@ textarea {
 .rail-group > small {padding:8px 12px 4px; color:#596679; font-size:.78rem; font-weight:650}
 .cap-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
 .system-admin .row-item {width:100%}
+
+.entry-card {max-width: 30rem; margin: 12vh auto; padding: 2rem; background: white; border: 1px solid #dde3ec; border-radius: 18px}
+.entry-card form {display:grid; gap:1rem; margin:1.5rem 0}
+.entry-card select {display:block; width:100%; margin-top:.5rem; padding:.65rem}
+.admin-app .top-in {justify-content:space-between}

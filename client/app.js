@@ -4,13 +4,11 @@ import Vuex from "vuex";
 import VueI18n from "vue-i18n";
 import en from "./i18n.js";
 import { call, card, date, fileUrl, tasks } from "./shared.js";
-import Studio from "./studio.js";
 import shell from "./shell.html";
 import overlays from "./overlays.html";
 Vue.use(Vuex);
 Vue.use(VueI18n);
 Vue.component("resource-card", card);
-Vue.component("studio", Studio);
 const store = new Vuex.Store({
   state: { data: null },
   mutations: {
@@ -20,7 +18,7 @@ const store = new Vuex.Store({
   },
   actions: {
     async load({ commit }) {
-      commit("refresh", await call("state"));
+      commit("refresh", await call("portal/state"));
     },
   },
 });
@@ -121,7 +119,7 @@ const app = new Vue({
       return Object.fromEntries(Object.entries(nav).filter(([,v])=>has(this.d?.user,v[1])).map(([k,v])=>[k,v[0]]));
     },
     staff() {
-      return !!this.d?.admin;
+      return !!this.d?.canManage;
     },
     filtered() {
       let out = this.d.materials.filter(
@@ -258,7 +256,7 @@ const app = new Vue({
         if (this.d !== prev || this.busy) return;
         const identityChanged = prev.user.id !== inbox.userId;
         const next = identityChanged || inbox.revision !== prev.revision
-          ? await call("state")
+          ? await call("portal/state")
           : { ...prev, notices: inbox.notices, requests: inbox.requests };
         if (this.d !== prev || this.busy) return;
         const seen = new Set(prev.notices.map((n) => n.key));
@@ -267,7 +265,7 @@ const app = new Vue({
         if (identityChanged || JSON.stringify(prev.user.scopes)!==JSON.stringify(next.user.scopes)) {
           this.due = next.prefs.deadline;
           this.notes = next.prefs.notes;
-          this.nav(next.admin ? "studio" : "discover");
+          this.nav("discover");
         }
         if (fresh) this.toast(fresh.msg);
       } catch {
@@ -331,15 +329,15 @@ const app = new Vue({
           this.modal = this.material ? "detail" : "unavailable";
         }
       } else {
-        this.page = ["library", "packs", "work", "studio"].includes(pg)
+        if (pg === "studio") { location.replace("/manage"); return; }
+        this.page = ["library", "packs", "work"].includes(pg)
           ? pg
           : "discover";
-        if (this.page === "studio" && !this.staff) this.page = "discover";
         if (this.page === "work" && this.tabs.includes(id)) this.tab = id;
       }
       if(this.page!=="studio" && !this.frontNav[this.page]) {
         this.modal="";
-        this.page=Object.keys(this.frontNav)[0] || (this.staff?"studio":"empty");
+        this.page=Object.keys(this.frontNav)[0] || "empty";
       }
       this.account = false;
       this.menu = false;
@@ -458,7 +456,7 @@ const app = new Vue({
         this.query = "";
         this.resetFilters();
         await this.refresh();
-        this.nav(this.staff ? "studio" : "discover");
+        this.nav("discover");
         this.toast(
           this.d.user.name + " · " + this.tx(this.roles[this.d.user.role]),
         );

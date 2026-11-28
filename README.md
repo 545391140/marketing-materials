@@ -12,7 +12,20 @@ npm test
 npm start
 ```
 
-打开 http://localhost:3000 。单独构建运行 `npm run build`。本地持久化文件位于被 Git 忽略的 `.runtime/local.sqlite`。全新本地部署使用本机共享试用空间：编辑、审核人和伙伴可在不同浏览器访问同一服务并完成交付。线上私有体验站仍按浏览器隔离演示空间。右上角头像标明当前身份，默认是渠道伙伴。示例人物、资料和 PDF 为产品验收数据。
+启动后分别访问两个地址。
+
+| 应用 | 本地入口 | 私有体验站 |
+| --- | --- | --- |
+| 营销资料中心（销售和伙伴） | http://localhost:3000 | https://ruijie-partner-materials-hub.dimpledcedar.chatgpt.site |
+| 资料管理端（内部员工） | http://localhost:3001 | https://ruijie-materials-admin.dimpledcedar.chatgpt.site |
+
+管理端首页先向共享服务校验权限。使用试用模式时，可在访问验证页选择资料编辑或审核身份。正式门户模式使用员工 SSO 和后台角色授权。原资料详情、场景包、消息链接继续从资料中心访问。旧的 `#/studio` 入口转往管理端。
+
+两个浏览器应用有独立的 HTML、JavaScript 和发布产物。分别运行 `npm run build:portal` 和 `npm run build:admin` 可单独更新 `dist/server/index.js`（资料中心及共享 API）和 `dist/admin/index.js`（管理端和 API 代理）。`npm run build` 同时构建两端。管理端独立发布时将其产物作为该站点的 `dist/server/index.js`，使用 `hosting/admin/.openai/hosting.json`。本地可用 `--port` 和 `--admin-port` 修改端口，管理端默认比资料中心大 1。
+
+本地两端共用项目目录的 `.runtime/local.sqlite`。线上仅资料中心服务绑定业务存储，管理端代理到同一 API。部署时为资料中心设置 `ADMIN_ORIGIN`，为管理端设置 `PORTAL_ORIGIN`。私有 Sites 上游的服务访问令牌放在管理端密钥 `PORTAL_SERVICE_TOKEN`。生产启用同一门户 SSO，两入口须能取得门户会话（如由 SSO 网关分别下发），并使用一致的 `PC_COOKIE_NAME`。服务令牌与用户会话分别校验。
+
+私有试用站的新浏览器默认使用同一试用资料库。升级前有独立试用空间的浏览器可从资料中心用员工身份在头像菜单选择「打开资料管理端」，将两个入口配对到原空间。此配对仅用于试用身份；正式门户使用统一业务空间。`SHARED_DEMO_SPACE` 是资料中心服务端为共享试用空间配置的 UUID，`DEMO_PAIRING=true` 仅在这两个受信任的试用站点配置。
 
 ### 升级已有本地部署
 

@@ -105,7 +105,7 @@ export function materialHistory(s, u, id) {
       : e.id === m.id || e.id === mid);
 }
 
-export function snapshot(s, c, env) {
+export function snapshot(s, c, env, includeAdmin = true) {
   const { u } = c,
     materials = s.materials
       .map((m) => visible(m, u, s.materials))
@@ -156,9 +156,10 @@ export function snapshot(s, c, env) {
       types: [...new Set(materials.map((m) => m.type))],
       categories: [...new Set(materials.map((m) => m.cat))],
     },
+    canManage: !!staff(u),
     admin: null,
   };
-  if (staff(u)) {
+  if (includeAdmin && staff(u)) {
     out.admin = {
       system:any(u,["users","roles","diagnose"])?systemView(s,c,env):null,
       stalled:s.drafts.filter(d=>d.state==="待审核" && has(u,"flow",d.bg) && !people(s,c).some(p=>

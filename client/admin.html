@@ -1,0 +1,10 @@
+<div id="app" class="admin-app">
+<header class="top"><div class="top-in"><div class="brand"><strong>Ruijie</strong><i></i><span>资料管理端</span></div>
+<div v-if="d" class="head-actions"><button class="user-btn" @click="account=!account" :aria-expanded="String(account)"><span class="avatar">{{d.user.name.slice(-1)}}</span>{{d.user.name}}</button></div>
+<div v-if="account && d" class="account-pop"><strong>{{d.user.name}}</strong><small>{{d.user.org}}</small><template v-if="d.demo"><div class="small-label">试用身份</div><button v-for="v in d.choices" @click="profile(v.id)">{{v.name}} · {{v.org}}</button></template></div></div></header>
+<button v-if="account" class="pop-back" @click="account=false" aria-label="关闭菜单"></button>
+<main v-if="d" class="wrap"><studio :key="d.user.id+JSON.stringify(d.user.scopes)" :d="d" :busy="busy"/></main>
+<main v-else class="boot">{{fatal||'正在校验管理权限…'}} <button v-if="fatal" class="btn" @click="reload">重新进入</button></main>
+<div v-if="preview" class="veil" @click.self="preview=null"><section class="dialog" role="dialog" aria-modal="true" :aria-label="preview.title"><button class="xbtn" @click="preview=null" aria-label="关闭预览"><ic n="X"/></button>
+<div class="dialog-body top-pad"><h2>{{preview.title}}</h2><p v-if="preview.loading">正在读取…</p><img v-if="preview.img" class="preview-img" :src="preview.img" :alt="preview.title"><pre v-else class="preview-text">{{preview.text}}</pre></div></section></div>
+<div v-if="alert" class="toast" role="status">{{alert}}</div></div>

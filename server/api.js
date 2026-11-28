@@ -3,7 +3,7 @@ import { has, any, materialCaps } from "../shared/permissions.js";
 import { diagnose } from "./system.js";
 import { identity, readState, update } from "./db.js";
 import { audienceCatalog } from "./audience-catalog.js";
-import { uid, need, visible, manages, fileAllowed, active, validRules, subset } from "./access.js";
+import { uid, need, staff, visible, manages, fileAllowed, active, validRules, subset } from "./access.js";
 import { snapshot, change, materialHistory } from "./service.js";
 import { profiles } from "./seed.js";
 import { inspect, mimes } from "./files.js";
@@ -47,15 +47,18 @@ export async function api(req, env) {
     ctx=scoped(stored.s);
     const u=ctx.u;
     let response;
-    if (req.method === "GET" && path === "/api/state") {
+    if (req.method === "GET" && path === "/api/admin/access") {
+      response=json({allowed:!!staff(u),demo:ctx.demo, choices:ctx.demo?Object.values(profiles).map(({id,name,org})=>({id,name,org})):[]},staff(u)?200:403);
+    } else if (req.method === "GET" && ["/api/state","/api/portal/state","/api/admin/state"].includes(path)) {
+      if(path==="/api/admin/state") need(staff(u),403,"当前账号没有资料管理权限");
       const { s, tag } = stored;
-      response = json({ ...snapshot(s, ctx, env), revision: tag, workspaceMode: ctx.workspaceMode });
+      response = json({ ...snapshot(s, ctx, env, path!=="/api/portal/state"), revision: tag, workspaceMode: ctx.workspaceMode });
     } else if (req.method === "GET" && path === "/api/admin/history") {
       const { s } = stored;
       response = json(materialHistory(s, u, url.searchParams.get("id")));
     } else if (req.method === "GET" && path === "/api/inbox") {
       const { s, tag } = stored;
-      const state = snapshot(s, ctx, env);
+      const state = snapshot(s, ctx, env, false);
       response = json({
         userId: u.id,
         revision: tag,

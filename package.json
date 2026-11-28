@@ -9,6 +9,8 @@
   "scripts": {
     "test": "npm run build && node --test tests/*.test.js",
     "build": "node scripts/build.mjs",
+    "build:portal": "node scripts/build.mjs portal",
+    "build:admin": "node scripts/build.mjs admin",
     "start": "node scripts/local.mjs",
     "dev": "node scripts/local.mjs",
     "test:worker": "npm run build && node scripts/check-worker.mjs"

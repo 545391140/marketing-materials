@@ -62,8 +62,8 @@ export async function identity(req, env) {
     return { u, ns: env.LOCAL_WORKSPACE, demo: true, workspaceMode: "local-shared" };
   let ns = cookie(req, "material_space");
   let fresh = !/^[a-f0-9-]{36}$/.test(ns);
-  if (fresh) ns = uid();
-  return { u, ns, demo: true, fresh, workspaceMode: env.LOCAL_RUNTIME ? "local-isolated" : "isolated" };
+  if (fresh) ns = env.SHARED_DEMO_SPACE || uid();
+  return { u, ns, demo: true, fresh, workspaceMode: env.LOCAL_RUNTIME ? "local-isolated" : ns===env.SHARED_DEMO_SPACE ? "hosted-shared" : "isolated" };
 }
 export async function recipient(ctx, env, id) {
   if (ctx.demo) return Object.hasOwn(profiles,id) ? profiles[id] : null;

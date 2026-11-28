@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import worker from "../dist/server/index.js";
+import adminWorker from "../dist/admin/index.js";
 import { allowed } from "../server/access.js";
 import { JSDOM, VirtualConsole } from "jsdom";
 function backend() {
@@ -219,7 +220,7 @@ test("released interface mounts and navigates the library, attachments, request 
   w.eval(script);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   await wait(40);
-  const doc = w.document;
+  let doc = w.document;
   assert.match(doc.body.innerText || doc.body.textContent, /伙伴资料中心/);
   assert(doc.querySelector(".hero"));
   doc.querySelector(".card-name").click();
@@ -231,10 +232,23 @@ test("released interface mounts and navigates the library, attachments, request 
   assert(
     doc.querySelector(".dialog form") || doc.querySelector(".dialog .form"),
   );
-  const root = doc.querySelector("#app").__vue__;
+  let root = doc.querySelector("#app").__vue__;
   assert(root);
   await root.profile("editor");
   await wait(80);
+  assert.equal(doc.querySelector(".studio"),null);
+  assert.equal((await (await h.get("/api/portal/state")).json()).admin,null);
+  const adminEnv={PORTAL_ORIGIN:"https://local.test",LOCAL_API:{fetch:r=>worker.fetch(r,h.env)}};
+  const adminGet=path=>adminWorker.fetch(new Request("https://admin.test"+path,{headers:{cookie:[...h.jar].map(([k,v])=>k+"="+v).join("; ")}}),adminEnv);
+  const entry=await adminGet("/");
+  assert.equal(entry.status,200);
+  const internal=new JSDOM(await entry.text(),{url:"https://admin.test",runScripts:"outside-only",virtualConsole:vc});
+  internal.window.fetch=w.fetch;
+  internal.window.eval(await (await adminGet("/admin.js")).text());
+  dom.window.close();
+  await wait(50);
+  doc=internal.window.document;
+  root=doc.querySelector("#app").__vue__;
   assert(doc.querySelector(".studio"));
   doc.querySelector(".studio-main .sec-head .btn").click();
   await wait(20);
@@ -281,7 +295,7 @@ test("released interface mounts and navigates the library, attachments, request 
   assert.match(scopeText,/新增授权组.*国家 泰国 · 伙伴类型 经销商/);
   assert.match(scopeText,/移除授权组.*国家 全部/);
   assert.deepEqual(errs, []);
-  dom.window.close();
+  internal.window.close();
 });
 
 test("Chinese PDF, Office, image and text originals generate controlled previews", async () => {
@@ -870,4 +884,20 @@ test("platform administrator synchronizes portal directory pages and retains ina
   current=profiles.reviewer;
   await h.act({op:"syncDirectory"},403);
   await h.act({op:"saveFlow",bg:"EBG"},403);
+});
+
+test("separate origins share the library and protect the management entry",async()=>{
+  const env={...backend(),LOCAL_RUNTIME:true,LOCAL_WORKSPACE:"local",ADMIN_ORIGIN:"https://admin.test"};
+  const adminEnv={PORTAL_ORIGIN:"https://portal.test",LOCAL_API:{fetch:r=>worker.fetch(r,env)}};
+  const get=(path,id)=>adminWorker.fetch(new Request("https://admin.test"+path,{headers:{cookie:"material_profile="+id}}),adminEnv);
+  for(const role of ["partner","partnerVn","sales"]){
+    assert.equal((await get("/",role)).status,403);
+    assert.equal((await get("/api/admin/state",role)).status,403);
+  }
+  assert.equal((await get("/","editor")).status,200);
+  assert.equal((await get("/app.js","editor")).status,404);
+  assert.equal((await worker.fetch(new Request("https://portal.test/admin.js"),env)).status,404);
+  assert.equal((await worker.fetch(new Request("https://portal.test/manage"),env)).headers.get("location"),"https://admin.test/");
+  const foreign=new Request("https://admin.test/api/profile",{method:"POST",headers:{origin:"https://other.test","x-material-client":"hub"}});
+  assert.equal((await adminWorker.fetch(foreign,adminEnv)).status,403);
 });
