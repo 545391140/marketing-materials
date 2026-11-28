@@ -19,6 +19,12 @@ export const manages = (u, m) =>
 export function fileAllowed(u,rules,cap) {
   return allowed(u.scopes ? {...u,grants:u.grants.filter((g)=>has(u,cap,g.bg) && has(u,"browse",g.bg))} : u,rules);
 }
+export function shareable(f,u) {
+  return f.usage==="可发客户" && f.customerShare===true && fileAllowed(u,f.view,"share");
+}
+export function downloadableToCustomer(f,u) {
+  return f.customerDownload===true && fileAllowed(u,f.download,"download");
+}
 export function visible(m, u, catalog = [], visited = new Set()) {
   if (u.scopes && !has(u,"browse")) return null;
   if (!active(m) || visited.has(m.id)) return null;
@@ -39,6 +45,8 @@ export function visible(m, u, catalog = [], visited = new Set()) {
       ext: f.ext,
       usage: f.usage,
       size: f.size || 0,
+      canShare: shareable(f,u),
+      customerDownload: shareable(f,u) && downloadableToCustomer(f,u),
       canDownload: fileAllowed(u, f.download,"download"),
     }));
   if (!files.length) return null;

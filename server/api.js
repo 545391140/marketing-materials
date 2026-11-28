@@ -1,3 +1,4 @@
+import {createLink,customerFiles,shareRoute} from "./shares.js";
 import { effective, remember, knownProfile } from "./roles.js";
 import { has, any, materialCaps } from "../shared/permissions.js";
 import { gapReport } from "./operations.js";
@@ -27,6 +28,54 @@ function fileResp(body, mime, filename, download = false) {
     },
   });
 }
+async function originalBody(env,f) {
+  if(f.seed) return f.ext==="pdf" ? Uint8Array.from(atob(pdfs[f.id]),c=>c.charCodeAt(0)) : f.preview;
+  const o=await env.BUCKET.get(f.original);
+  need(o,404,"附件不可用");
+  return o.body;
+}
+async function previewResponse(env,ns,f,url,mode) {
+  if (mode === "layout") {
+    const load = async () => new Uint8Array(await new Response(await originalBody(env,f)).arrayBuffer());
+    let layout;
+    try {
+      layout = await layoutPreview(env.BUCKET, f.original || ns + "/samples/" + f.id, f, load, url.searchParams.get("page"));
+    } catch (e) {
+      if (e.status) throw e;
+      need(false, 422, "当前文件无法生成排版预览");
+    }
+    if (!layout.data) return json(layout);
+    const response = fileResp(layout.data, layout.mime, f.id + "-page");
+    if (layout.mime === "image/svg+xml")
+      response.headers.set("content-security-policy", "sandbox; default-src 'none'; img-src data:");
+    return response;
+  }
+  if (f.previewKey) {
+    const o = await env.BUCKET.get(f.previewKey);
+    need(o, 404, "预览不可用");
+    return fileResp(o.body, f.mime, f.id + "-preview");
+  }
+  return json({ text: f.preview, title: f.name });
+}
+async function shareResponse(token,env,url) {
+  const index=await env.BUCKET.get("share-index/"+token);
+  need(index,404,"分享已失效或不可用");
+  const ns=await index.text();
+  const {s}=await releaseDue(env,ns);
+  const {link,files}=await customerFiles(s,token,ns,env);
+  const mode=url.searchParams.get("mode");
+  if(mode==="info") return json({title:link.title,version:link.version,expiresAt:link.expiresAt,
+    files:files.map(({file:{id,name,ext,size},canDownload})=>({id,name,ext,size,canDownload}))});
+  const selected=files.find(x=>x.file.id===url.searchParams.get("f"));
+  need(selected,404,"附件不可用");
+  const f=selected.file;
+  if(mode==="download") {
+    need(selected.canDownload,403,"分享人未授权下载此附件");
+    return fileResp(await originalBody(env,f),mimes[f.ext],f.name,true);
+  }
+  need(["preview","layout"].includes(mode),404,"未找到");
+  return previewResponse(env,ns,f,url,mode);
+}
 export async function api(req, env) {
   let ctx;
   try {
@@ -37,6 +86,21 @@ export async function api(req, env) {
       const origin = req.headers.get("origin");
       need(!origin || origin === url.origin, 403, "请求来源无效");
       need(req.headers.get("x-material-client") === "hub", 403, "无效请求");
+    }
+    const token=shareRoute.exec(path)?.[1];
+    if (token || path.startsWith("/share-fonts/")) {
+      need(req.method==="GET",405,"请求方式无效");
+      let result;
+      if(token) result=await shareResponse(token,env,url);
+      else {
+        const font=readPdfResource(path.slice("/share-fonts/".length));
+        need(font,404,"未找到");
+        result=new Response(font,{headers:{"content-type":"application/octet-stream"}});
+      }
+      result.headers.set("cache-control","private,no-store");
+      result.headers.set("referrer-policy","no-referrer");
+      result.headers.set("x-content-type-options","nosniff");
+      return result;
     }
     ctx = await identity(req, env);
     const raw=ctx.u, ns=ctx.ns;
@@ -87,6 +151,10 @@ export async function api(req, env) {
       response=fileResp(obj.body,f.mime,"cover");
     } else if (req.method === "POST" && path === "/api/diagnose") {
       response=json(await diagnose(stored.s,ctx,env,await req.json()));
+    } else if (req.method === "POST" && path === "/api/shares") {
+      need(env.SHARE_ORIGIN,503,"尚未配置客户访问地址");
+      if (!ctx.demo) need(env.PC_DIRECTORY_URL && env.PC_SERVICE_TOKEN,503,"需要配置门户目录以实时校验分享人权限");
+      response=json(await createLink(env,ctx,scoped,await req.json()));
     } else if (req.method === "POST" && path === "/api/actions") {
       const a = await req.json();
       await update(env, ns, (s) => change(s, scoped(s), env, a));
@@ -209,17 +277,7 @@ export async function api(req, env) {
       need(f && (draft || fileAllowed(u,f.view,"browse")), 404, "资料不可用");
       if (mode === "download") {
         need(!draft && fileAllowed(u,f.download,"download"), 403, "没有下载权限");
-        let body;
-        if (f.seed) {
-          body =
-            f.ext === "pdf"
-              ? Uint8Array.from(atob(pdfs[f.id]), (c) => c.charCodeAt(0))
-              : f.preview;
-        } else {
-          const o = await env.BUCKET.get(f.original);
-          need(o, 404, "附件不可用");
-          body = o.body;
-        }
+        const body=await originalBody(env,f);
         await update(env, ns, (state) => {
           const current = state.materials.find(x => x.id === mid);
           const account = scoped(state).u;
@@ -234,30 +292,7 @@ export async function api(req, env) {
           });
         });
         response = fileResp(body, mimes[f.ext], f.name, true);
-      } else if (mode === "layout") {
-        const load = async () => {
-          if (f.seed && f.ext === "pdf" && pdfs[f.id]) return Uint8Array.from(atob(pdfs[f.id]), c => c.charCodeAt(0));
-          const asset = f.original && await env.BUCKET.get(f.original);
-          need(asset, 404, "原文件不可用");
-          return new Uint8Array(await new Response(asset.body).arrayBuffer());
-        };
-        let layout;
-        try {
-          layout = await layoutPreview(env.BUCKET, f.original || ns + "/samples/" + f.id, f, load, url.searchParams.get("page"));
-        } catch (e) {
-          if (e.status) throw e;
-          need(false, 422, "当前文件无法生成排版预览");
-        }
-        if (layout.data) {
-          response = fileResp(layout.data, layout.mime, f.id + "-page");
-          if (layout.mime === "image/svg+xml")
-            response.headers.set("content-security-policy", "sandbox; default-src 'none'; img-src data:");
-        } else response = json(layout);
-      } else if (f.previewKey) {
-        const o = await env.BUCKET.get(f.previewKey);
-        need(o, 404, "预览不可用");
-        response = fileResp(o.body, f.mime, f.id + "-preview");
-      } else response = json({ text: f.preview, title: f.name });
+      } else response = await previewResponse(env,ns,f,url,mode);
     } else need(false, 404, "未找到");
     if (ctx.fresh) setCookie(response, "material_space", ns, url);
     response.headers.set("cache-control", "private,no-store");

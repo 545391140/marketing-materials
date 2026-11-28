@@ -12,16 +12,17 @@ npm test
 npm start
 ```
 
-启动后分别访问两个地址。
+启动后，员工和伙伴从各自入口登录。客户通过收到的专属链接访问附件。
 
-| 应用 | 本地入口 | 私有体验站 |
+| 应用 | 本地入口 | 体验站 |
 | --- | --- | --- |
 | 营销资料中心（销售和伙伴） | http://localhost:3000 | https://ruijie-partner-materials-hub.dimpledcedar.chatgpt.site |
 | 资料管理端（内部员工） | http://localhost:3001 | https://ruijie-materials-admin.dimpledcedar.chatgpt.site |
+| 客户分享页（凭链接访问） | http://localhost:3002/s/… | https://ruijie-customer-materials.dimpledcedar.chatgpt.site/s/… |
 
 管理端首页先向共享服务校验权限。使用试用模式时，可在访问验证页选择资料编辑或审核身份。正式门户模式使用员工 SSO 和后台角色授权。原资料详情、场景包、消息链接继续从资料中心访问。旧的 `#/studio` 入口转往管理端。
 
-两个浏览器应用有独立的 HTML、JavaScript 和发布产物。分别运行 `npm run build:portal` 和 `npm run build:admin` 可单独更新 `dist/server/index.js`（资料中心及共享 API）和 `dist/admin/index.js`（管理端和 API 代理）。`npm run build` 同时构建两端。管理端独立发布时将其产物作为该站点的 `dist/server/index.js`，使用 `hosting/admin/.openai/hosting.json`。本地可用 `--port` 和 `--admin-port` 修改端口，管理端默认比资料中心大 1。
+两个浏览器应用有独立的 HTML、JavaScript 和发布产物。分别运行 `npm run build:portal` 和 `npm run build:admin` 可单独更新 `dist/server/index.js`（资料中心及共享 API）和 `dist/admin/index.js`（管理端和 API 代理）。`npm run build` 构建资料中心、管理端及客户分享入口。管理端独立发布时将其产物作为该站点的 `dist/server/index.js`，使用 `hosting/admin/.openai/hosting.json`。本地可用 `--port` 和 `--admin-port` 修改端口，管理端默认比资料中心大 1。
 
 本地两端共用项目目录的 `.runtime/local.sqlite`。线上仅资料中心服务绑定业务存储，管理端代理到同一 API。部署时为资料中心设置 `ADMIN_ORIGIN`，为管理端设置 `PORTAL_ORIGIN`。私有 Sites 上游的服务访问令牌放在管理端密钥 `PORTAL_SERVICE_TOKEN`。生产启用同一门户 SSO，两入口须能取得门户会话（如由 SSO 网关分别下发），并使用一致的 `PC_COOKIE_NAME`。服务令牌与用户会话分别校验。
 
@@ -140,3 +141,12 @@ npm start
 ### 无人访问时执行发布
 
 本地共享服务每 5 秒检查一次。自行部署 Worker 可将 Cron Trigger 绑定到默认导出的 scheduled 处理器。使用 owner-private Sites 时可启用 PRIVATE_SITE_MAINTENANCE=enabled，由绑定于资料中心的云任务定期 POST /internal/maintenance，带 x-material-task: release-due。仅在私有 Sites 身份网关后开启该入口。每次调用单独返回实际发布数、站内通知数和外部消息发送情况，在业务存储中写入执行回执。定时发布针对目录中可访问该资料的销售和伙伴产生站内消息，需求交付沿用原请求的通知。外部 Partner Center 推送依赖 PC_MESSAGE_URL、PC_SESSION_URL 和 PC_SERVICE_TOKEN，投递失败将重试。
+
+## 客户分享
+
+1. 编辑在上传或修改附件时选择「可发客户」，勾选「允许授权账号为此附件生成客户链接」，按需另行开放「允许客户下载原件」。保存并通过审批后生效。已有附件需要编辑确认并重新发布，原来的用途标签不会自动开放匿名访问。
+2. 伙伴及销售的角色需要具备「我的工作台」「资料发现与资料库」「创建客户分享链接」权限。在资料详情点「分享给客户」，勾选附件和 1、7 或 30 天有效期。默认仅预览。客户下载还需要附件授权、分享人本人拥有原件下载权，且生成链接时选中允许下载。
+3. 客户无需登录，持链接的人可查看授权附件。「我的工作台 → 我的分享」可复制和关闭自己的链接。链接保存具体发布版本。编辑替换旧文件时，在新版草稿中移除旧附件、上传新附件并选择「替换原版本中的附件」，随后提交审核。旧链接继续展示原文件；直接移除附件或取消对外分享，会停止提供该附件。整份资料下架会关闭对应链接。
+4. 客户的每次文件请求均核对有效期、发布状态、分享人的实时账号权限及附件授权。正式 Partner Center 模式需接通 PC_DIRECTORY_URL 和 PC_SERVICE_TOKEN。已经下载到客户设备的文件无法远程收回。
+
+自建环境可使用 CUSTOMER_PORT / --customer-port 配置客户服务端口，SHARE_ORIGIN 指定客户能访问的 HTTPS 地址，PORTAL_ORIGIN 指定客户网关的资料中心上游。默认本机地址只适合同机验证。资料中心与管理端可保留私有访问策略。单独部署客户 Worker 时使用 hosting/customer/.openai/hosting.json 和 dist/customer/index.js，客户网关的 PORTAL_SERVICE_TOKEN 存于服务端密钥；它只代理分享和字体路径，业务接口与站内页面均不对客户提供。

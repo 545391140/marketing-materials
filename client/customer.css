@@ -1,0 +1,25 @@
+:root{color-scheme:light;font-family:Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;color:#192e43;background:#f5f6f8;font-size:16px}
+*{box-sizing:border-box}body{margin:0}button{font:inherit;cursor:pointer}button:focus-visible,a:focus-visible{outline:3px solid #296caa;outline-offset:3px}
+.customer-brand{background:#fff;border-bottom:1px solid #e2e5e9}
+.customer-brand>div{max-width:1232px;margin:auto;min-height:64px;padding:0 36px;display:flex;gap:18px;align-items:center;font-size:.9rem}
+.customer-brand strong{color:#be1f38;font-size:1.55rem;font-weight:800;letter-spacing:-.06em;font-style:italic}
+.customer-brand span{border-left:1px solid #cfd5dc;padding-left:18px}
+.customer-main,#shared-materials{width:min(100%,1232px);margin:auto;padding:32px 36px 64px}
+.customer-title{padding:8px 0 24px}.customer-title h1,.customer-state h1{font-size:clamp(1.5rem,3.5vw,2.45rem);margin:0;line-height:1.28;letter-spacing:-.025em;overflow-wrap:anywhere}
+.customer-title p{display:flex;flex-wrap:wrap;gap:8px 18px;margin:12px 0 0;color:#526476;font-size:.94rem}
+.customer-layout{display:grid;grid-template-columns:minmax(200px,255px) minmax(0,1fr);gap:20px;align-items:start}
+.customer-files,.customer-file,.customer-state{background:#fff;border:1px solid #dce2e8;border-radius:16px}
+.customer-files{padding:16px 10px}.customer-files h2{margin:0 8px 10px;font-size:.99rem}
+.customer-files button{display:flex;align-items:center;gap:10px;border:1px solid transparent;border-radius:9px;background:#fff;text-align:left;color:inherit;width:100%;padding:11px 8px}
+.customer-files button+button{margin-top:3px}.customer-files button:hover{background:#f6f8fa}.customer-files button.is-selected{background:#edf3f8;border-color:#b9cde0}
+.file-format{display:grid;place-items:center;min-width:42px;height:36px;font-size:.72rem;font-weight:750;letter-spacing:.03em;border:1px solid #cbd4df;border-radius:6px;background:white;color:#37516c}
+.file-label{min-width:0}.file-label strong,.file-label small{display:block}.file-label strong{overflow-wrap:anywhere;font-weight:600;font-size:.92rem;line-height:1.3}
+.file-label small{color:#536579;font-size:.80rem;margin-top:5px}
+.customer-file{padding:20px;min-width:0}.customer-file>header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.customer-file h2{font-size:1.13rem;line-height:1.4;overflow-wrap:anywhere;margin:0}
+.customer-download,.customer-state button,.customer-file-error button{min-height:40px;border:0;padding:8px 15px;border-radius:7px;font-weight:600}
+.customer-download{background:#213c56;color:white}.customer-download:disabled{opacity:.6}
+.customer-file [role=alert],.customer-state p,.customer-main [role=status]{color:#435b72}
+.customer-file .preview-text{font:inherit;line-height:1.7;overflow-wrap:anywhere;white-space:pre-wrap}
+.customer-state{margin:10vh auto;max-width:560px;padding:32px}.customer-state h1{font-size:1.5rem}
+@media(max-width:780px){.customer-brand>div{padding:0 16px;min-height:54px}.customer-main,#shared-materials{padding:20px 12px 40px}.customer-title{padding:4px 4px 18px}.customer-layout{grid-template-columns:1fr;gap:12px}.customer-files,.customer-file{padding:12px}.customer-files h2{margin-left:5px}.customer-files button{min-height:42px}.customer-file .preview-paper{max-height:73vh}.customer-state{padding:20px}.customer-file .preview-tools{gap:.35rem}}

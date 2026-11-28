@@ -1,3 +1,4 @@
+import { slotId, myShares, closeLink, updateSharedVersions } from "./shares.js";
 import { opportunities, editOpportunity, recordSearch, directoryOptions, validDay } from "./operations.js";
 import { searchContext, languages } from "../shared/discovery.js";
 import { systemView, administer } from "./system.js";
@@ -85,8 +86,8 @@ function expiryNotices(materials, p) {
       };
     });
 }
-function fileInfo({ id, name, ext, size, usage, inherit, view, download, uploadedAt }) {
-  return { id, name, ext, size, usage, inherit, view, download, uploadedAt };
+function fileInfo({ id, name, ext, size, usage, inherit, view, download, uploadedAt, customerShare, customerDownload, shareSlot }) {
+  return { id, name, ext, size, usage, inherit, view, download, uploadedAt, customerShare, customerDownload, shareSlot };
 }
 
 function pendingUploads(s, u) {
@@ -143,6 +144,7 @@ export function snapshot(s, c, env, includeAdmin = true) {
   const out = {
     user: {...publicPerson(u),scopes:u.scopes,root:u.root},
     affiliations: u.grants.filter(g=>has(u,"request",g.bg)).map(({bg,region,country,channel})=>({bg,region,country,channel})),
+    shares: myShares(s,u,env.SHARE_ORIGIN),
     opportunities: has(u,"personal") ? opportunities(s,u,materials) : [],
     demo: c.demo,
     choices: c.demo ? Object.values(profiles).map(publicPerson) : [],
@@ -276,6 +278,7 @@ async function publishApproved(s, d, u, stageNote, comment, recipientUser) {
   };
   s.materials = [m, ...s.materials.filter((x) => x.id !== mid)];
   s.drafts = s.drafts.filter((x) => x !== d);
+  if (prev) updateSharedVersions(s,m);
   if (prev) notifySaved(s, m, "关注的资料已换版，请核对更新内容");
   if (req) {
     if (deliver(s, req, m, await recipientUser(req.by), deliveryFiles))
@@ -342,6 +345,7 @@ export async function releaseDue(env, ns) {
 }
 export async function change(s, c, env, a) {
   const op=a.op;
+  if (op==="closeShare") return closeLink(s,c.u,a.id);
   if (["createOpportunity","saveOpportunityItem","removeOpportunityItem"].includes(op)) return editOpportunity(s,c.u,a);
   if (op==="searchMiss") return recordSearch(s,c.u,a);
   if(["saveRole","assignRoles","syncDirectory"].includes(op)) return administer(s,c,env,a);
@@ -709,8 +713,12 @@ export async function change(s, c, env, a) {
         400,
         "仅内部附件需限定员工身份",
       );
+      const replaces=f.replaces && base?.files.find(x=>x.id===f.replaces);
+      need(!f.replaces || replaces,400,"只能替换当前资料原有的附件");
+      const customerShare=f.usage==="可发客户" && (f.customerShare ?? src.customerShare)===true;
       return {
-        ...src,
+        ...src, shareSlot:replaces ? slotId(replaces) : f.replaces==="" && !base?.files.some(x=>x.id===src.id) ? src.id : slotId(src), customerShare,
+        customerDownload:customerShare && (f.customerDownload ?? src.customerDownload)===true,
         view: v,
         download: d,
         usage: f.usage,
@@ -796,6 +804,7 @@ export async function change(s, c, env, a) {
       need(d.deliveryFiles.length, 400, "请选择交付给提交人的附件");
     for (const id of [...files.map((f) => f.id), d.coverId])
       if (s.uploads?.[id]) s.uploads[id].filed = true;
+    need(new Set(files.map(slotId)).size===files.length,400,"同一个附件位置不能重复使用");
     if (old) Object.assign(old, d, { reason: "" });
     else s.drafts.unshift(d);
     if (assigned) {
@@ -881,6 +890,7 @@ export async function change(s, c, env, a) {
     const replacement = a.replacementId && s.materials.find(x => x.id === a.replacementId);
     need(!a.replacementId || (replacement && replacement.id !== m.id && active(replacement) && manages(u, replacement)), 400, "替代资料不可用");
     m.published = false;
+    updateSharedVersions(s,m);
     for (const d of s.drafts.filter(x => x.mid === m.id && x.state === scheduled))
       stopSchedule(s, d, u, "当前版本已下架，定时发布已取消");
     const downloaders = new Set(s.audit.filter(e => e.action === "下载附件" && e.downloadMid === m.id &&

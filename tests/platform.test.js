@@ -1170,3 +1170,86 @@ test("a merged request is delivered separately to every eligible submitter", asy
     assert(!s.notices.some(n=>n.rid && n.rid!==requests[i]));
   }
 });
+
+test("anonymous customer links pin selected files and enforce live rights for every request",async t=>{
+  const {default:gateway}=await import("../dist/customer/index.js");
+  const start=Date.now();
+  t.mock.timers.enable({apis:["Date"],now:start});
+  const env={...backend(),SHARE_ORIGIN:"https://customer.test"};
+  const h=harness(env);
+  const publicEnv={PORTAL_ORIGIN:"https://local.test",LOCAL_API:{fetch:r=>worker.fetch(r,env)}};
+  const guest=(url,options)=>gateway.fetch(new Request(url,options),publicEnv);
+  await h.data();await h.user("editor");
+  const upload=async(name,text)=>{
+    const data=new FormData();data.append("file",new Blob([text]),name);
+    return (await h.get("/api/upload",data)).json();
+  };
+  const first=await upload("原规格.txt","original bytes");
+  const annex=await upload("客户附件.txt","customer annex");
+  const internal=await upload("培训.txt","private training");
+  const rules=[{role:"伙伴",bg:"EBG",region:"东南亚",channel:"集成",country:["VN"]}];
+  const spec={...first,inherit:true,usage:"可发客户",customerShare:true,customerDownload:true};
+  const extra={...annex,inherit:true,usage:"可发客户",customerShare:true};
+  const training={...internal,inherit:true,usage:"伙伴学习"};
+  const base={op:"save",title:"固定版本",summary:"方案",cat:"园区网络",type:"客户案例",bg:"EBG",
+    defaultView:rules,defaultDownload:rules,submit:true};
+  async function publish(mid,files){
+    await h.user("editor");
+    await h.act({...base,mid,files});
+    const draft=(await h.data()).admin.drafts[0];
+    await h.user("reviewer");await h.act({op:"review",id:draft.id,approve:true});
+    return draft.mid;
+  }
+  const mid=await publish("",[spec,extra,training]);
+  const payload={mid,version:1,files:[first.id,annex.id],downloads:[],days:1};
+  await h.user("partner");assert.equal((await h.get("/api/shares",payload)).status,403);
+  await h.user("partnerVn");
+  assert.equal((await h.get("/api/shares",{...payload,files:[internal.id]})).status,403);
+  assert.equal((await h.get("/api/shares",{...payload,downloads:[annex.id]})).status,403);
+  const make=async(changes={})=>{
+    const r=await h.get("/api/shares",{...payload,...changes});assert.equal(r.status,200);
+    const {id}=await r.json();
+    return (await h.data()).shares.find(x=>x.id===id);
+  };
+  const link=await make({downloads:[first.id]});
+  const previewOnly=await make();
+  const view=(record,mode="info",fid="")=>guest(record.path+"?mode="+mode+"&f="+fid);
+  assert.equal((await guest(link.path)).status,200);
+  const info=await (await view(link)).json();
+  assert.deepEqual(info.files.map(f=>f.name),[first.name,annex.name]);
+  assert.equal(await (await view(link,"download",first.id)).text(),"original bytes");
+  assert.equal((await view(previewOnly,"download",first.id)).status,403);
+  assert.equal((await view(link,"download",annex.id)).status,403);
+  assert.equal((await view(link,"preview",internal.id)).status,404);
+  assert.equal((await guest("https://customer.test/api/admin/state")).status,404);
+  assert.equal((await guest("https://customer.test/internal/maintenance",{method:"POST"})).status,405);
+  await h.user("partner");
+  assert.equal((await h.data()).shares.length,0);
+  await h.act({op:"closeShare",id:link.id},404);
+  await h.user("editor");const newer=await upload("新规格.txt","version two");
+  const revision={...spec,id:newer.id,replaces:first.id};
+  await publish(mid,[revision,extra,training]);
+  await h.user("partnerVn");
+  assert((await h.data()).notices.some(n=>n.msg.includes("已有客户链接")));
+  assert.equal((await (await view(link)).json()).version,1);
+  assert.equal(await (await view(link,"download",first.id)).text(),"original bytes");
+  const v2=await make({version:2,files:[newer.id],downloads:[newer.id]});
+  assert.equal(await (await view(v2,"download",newer.id)).text(),"version two");
+  await h.act({op:"closeShare",id:previewOnly.id});
+  assert.equal((await view(previewOnly)).status,404);
+  await h.user("admin");
+  await h.act({op:"saveRole",name:"仅使用资料",caps:["browse","download","personal"]});
+  const role=(await h.data()).admin.system.roles.find(r=>r.name==="仅使用资料");
+  await h.act({op:"assignRoles",userId:"partnerVn",bg:"EBG",ids:[role.id],version:0});
+  assert.equal((await view(link)).status,404);
+  await h.act({op:"assignRoles",userId:"partnerVn",bg:"EBG",ids:["viewer"],version:1});
+  await publish(mid,[{...revision,replaces:undefined,customerDownload:false},{...extra,customerShare:false},training]);
+  assert.deepEqual((await (await view(link)).json()).files.map(f=>f.id),[first.id]);
+  assert.equal((await view(link,"download",first.id)).status,403);
+  assert.equal((await view(link,"preview",annex.id)).status,404);
+  await h.user("partnerVn");const long=await make({version:3,files:[newer.id],days:30});
+  t.mock.timers.setTime(start+86400001);
+  assert.equal((await view(link)).status,404);assert.equal((await view(long)).status,200);
+  await h.user("editor");await h.act({op:"withdraw",id:mid,comment:"停止外发"});
+  assert.equal((await view(long)).status,404);
+});

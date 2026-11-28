@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { localWorkspace } from "./local-workspace.mjs";
 import worker from "../dist/server/index.js";
+import customerWorker from "../dist/customer/index.js";
 import adminWorker from "../dist/admin/index.js";
 mkdirSync(".runtime", { recursive: true });
 const db = new DatabaseSync(".runtime/local.sqlite");
@@ -58,6 +59,8 @@ const port = Number(param("--port") || process.env.PORT || 3000);
 const adminPort = Number(
   param("--admin-port") || process.env.ADMIN_PORT || port + 1
 );
+const customerPort=Number(param("--customer-port") || process.env.CUSTOMER_PORT || Math.max(port,adminPort)+1);
+if([port,adminPort].includes(customerPort)) throw Error("客户入口需要独立端口");
 if (adminPort === port) throw Error("资料中心与管理端必须使用不同端口");
 const host = param("--host") || process.env.HOST || "127.0.0.1";
 const portalOrigin = process.env.PORTAL_ORIGIN || "http://localhost:" + port;
@@ -70,6 +73,7 @@ const environment = {
   DEMO_MODE: process.env.DEMO_MODE ?? "true",
   PORTAL_ORIGIN: portalOrigin,
   ADMIN_ORIGIN: adminOrigin,
+  SHARE_ORIGIN: process.env.SHARE_ORIGIN || "http://localhost:"+customerPort,
 };
 function serve(handler, listenPort, env) {
   return http
@@ -120,4 +124,6 @@ serve(adminWorker, adminPort, {
   ...environment,
   LOCAL_API: { fetch: (r) => worker.fetch(r, environment) },
 });
+serve(customerWorker,customerPort,{PORTAL_ORIGIN:portalOrigin,LOCAL_API:{fetch:r=>worker.fetch(r,environment)}});
+console.log("客户资料分享："+environment.SHARE_ORIGIN);
 console.log("营销资料中心：" + portalOrigin + "  资料管理端：" + adminOrigin);

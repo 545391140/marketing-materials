@@ -32,7 +32,7 @@ export default {
       const result=await maintenance(env,true);
       return Response.json(result||{error:"未配置共享发布空间"},{status:result?200:503,headers:{"cache-control":"no-store"}});
     }
-    if (path.startsWith("/api/")) {
+    if (path.startsWith("/api/") || path.startsWith("/s/") || path.startsWith("/share-fonts/")) {
       const result = await api(req, {
         ...env,
         BUCKET: env.BUCKET,

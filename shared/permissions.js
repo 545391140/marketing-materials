@@ -4,6 +4,7 @@ export const permissions = {
   personal: "我的工作台",
   request: "提交资料需求",
   download: "下载已授权附件",
+  share: "创建客户分享链接",
   read: "查阅资料台账",
   edit: "上传、编辑与送审",
   withdraw: "下架资料",
@@ -18,7 +19,7 @@ export const permissions = {
   roles: "维护角色与菜单权限",
   diagnose: "查询权限原因",
 };
-export const front = ["browse", "kits", "personal", "request", "download"];
+export const front = ["browse", "kits", "personal", "request", "download", "share"];
 export const groups = [
   [
     "工作台",

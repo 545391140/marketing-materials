@@ -1,3 +1,4 @@
+import shareControls from "./share-controls.js";
 import {readPreview} from "./document-preview.js";
 import { matchesMaterial, searchContext, languages } from "../shared/discovery.js";
 import opportunityLists from "./opportunities.js";
@@ -11,6 +12,7 @@ import shell from "./shell.html";
 import overlays from "./overlays.html";
 Vue.use(Vuex);
 Vue.use(VueI18n);
+Vue.component("share-controls",shareControls);
 Vue.component("resource-card", card);
 Vue.component("opportunity-lists",opportunityLists);
 const store = new Vuex.Store({
@@ -109,7 +111,7 @@ const app = new Vue({
         ["回应客户问题", "选型依据与应答指南", "MessagesSquare", "green"],
         ["准备投标", "参数、资质与授权核对", "ClipboardCheck", "amber"],
       ],
-      tabs: ["我的收藏", "任务清单", "商机清单", "我的需求", "站内消息"],
+      tabs: ["我的收藏", "任务清单", "商机清单","我的分享", "我的需求", "站内消息"],
     };
   },
   computed: {

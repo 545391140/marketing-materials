@@ -1589,3 +1589,4 @@ textarea {
 .content-ops table{width:100%;border-collapse:collapse;font-size:.9rem}
 .content-ops th,.content-ops td{text-align:left;padding:.65rem;border-bottom:1px solid #e6ebef}
 .content-ops .resource{max-width:320px}.content-ops h3{margin-top:1.1rem}.content-ops .error{color:#a42b36}
+.share-controls{display:grid;gap:.85rem}.share-controls h3,.share-controls p{margin:.3rem 0}.share-file{border-bottom:1px solid #e2e8f0;padding:.6rem 0;display:flex;justify-content:space-between;gap:.8rem;flex-wrap:wrap}.share-file label{display:inline-flex;align-items:center;gap:.4rem}.share-file small{color:#546275}

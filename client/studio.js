@@ -241,7 +241,11 @@ export default {
           const time = new Date(m.publishAt);
           b.publishAt = new Date(time.getTime() - time.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
         } else b.publishAt = "";
-        b.files = b.files.map((x) => ({ ...x, inherit: !!x.inherit }));
+        const base=this.a.published.find(p=>p.id===b.mid);
+        b.files = b.files.map(x => {
+          const original=base?.files.find(f=>f.id!==x.id && (f.shareSlot||f.id)===x.shareSlot);
+          return {...x,inherit:!!x.inherit,replaces:original?.id||""};
+        });
       }
       if (req) {
         const r = this.r;

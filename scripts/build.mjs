@@ -7,8 +7,10 @@ const adminManifest = JSON.parse(
   await fs.readFile("hosting/admin/.openai/hosting.json", "utf8")
 );
 const adminCheckout = manifest.project_id === adminManifest.project_id;
-const target = process.argv[2] || (adminCheckout ? "admin" : "all");
-if (!["all", "portal", "admin"].includes(target))
+const customerId=JSON.parse(await fs.readFile("hosting/customer/.openai/hosting.json","utf8")).project_id;
+const customerCheckout=manifest.project_id===customerId;
+const target = process.argv[2] || (adminCheckout ? "admin" : customerCheckout ? "customer" : "all");
+if (!["all", "portal", "admin","customer"].includes(target))
   throw Error("Expected portal or admin");
 async function bundleApp(side) {
   const admin = side === "admin";
@@ -118,5 +120,10 @@ async function bundleApp(side) {
   }
   console.log("Built " + side + " into " + dir);
 }
-if (target !== "admin") await bundleApp("portal");
-if (target !== "portal") await bundleApp("admin");
+if (target === "all" || target === "portal") await bundleApp("portal");
+if (target === "all" || target === "admin") await bundleApp("admin");
+
+if(target==="all" || target==="customer") {
+  const {bundleCustomer}=await import("./build-customer.mjs");
+  await bundleCustomer(customerCheckout?"dist/server":"dist/customer");
+}
