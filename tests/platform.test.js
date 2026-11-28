@@ -1007,3 +1007,166 @@ test("late final approval releases immediately and scheduled demand delivery wai
   await h.act({ op: "review", approve: true, id: next.id });
   assert.equal((await h.data()).admin.published.find(m => m.id === base.id).version, base.version + 2);
 });
+
+test("target account preview, search context, merged delivery, opportunity versions and dated reviews", async () => {
+  const {matchesMaterial}=await import("../shared/discovery.js");
+  const h=harness();
+  await h.data();
+  const filters={query:"UniWiFi",language:"Tiếng Việt",market:"VN"};
+  await h.act({op:"searchMiss",filters});
+  await h.act({op:"request",title:"当地投标资料",purpose:"下周投标",searchContext:filters,affiliation:1});
+  const th=(await h.data()).requests[0];
+  assert.equal(th.country,"TH");assert.equal(th.searchContext.query,"UniWiFi");
+  await h.user("partnerVn");
+  await h.act({op:"request",title:"当地投标资料",purpose:"系统集成",external:true});
+  const vn=(await h.data()).requests[0];
+  await h.user("editor");
+  await h.act({op:"mergeDemand",id:th.id,childId:vn.id});
+  await h.act({op:"planDemand",id:th.id,promised:"2033-09-01"});
+  await h.act({op:"claim",id:th.id});
+  const form=new FormData();
+  form.append("file",new Blob(["partner tender guide"]),"guide.txt");
+  const file=await (await h.get("/api/upload",form)).json();
+  const rules=[{role:"伙伴",bg:"EBG",region:"东南亚",country:["TH"],channel:"全部"}];
+  const save={op:"save",bg:"EBG",title:"手册",type:"客户案例",cat:"园区网络",summary:"产品资料",
+    language:"Tiếng Việt",markets:["VN"],models:["RG-X100"],aliases:["UniWiFi"],reviewOn:"2031-06-02",
+    defaultView:rules,defaultDownload:rules,req:th.id,deliveryFiles:[file.id],submit:true,
+    files:[{id:file.id,inherit:true,usage:"可发客户"}]};
+  await h.act(save);
+  const draft=(await h.data()).admin.drafts[0];
+  const target=async (id,userId)=>(await h.get("/api/admin/audience-preview",{id,userId})).json();
+  const est=await target(draft.id,"partner");
+  assert.equal(est.card.title,"手册");assert.equal(est.card.files[0].canDownload,true);
+  const denied=await target(draft.id,"partnerVn");
+  assert.equal(denied.card,null);assert.match(denied.files[0].reason,/国家/);
+  await h.user("reviewer");await h.act({op:"review",id:draft.id,approve:true});
+  await h.user("partner");
+  const d=await h.data(),m=d.materials.find(m=>m.id===draft.mid);
+  assert.deepEqual(est.card.files,m.files);
+  assert(matchesMaterial(m,filters));assert(matchesMaterial(m,{query:"rgx100"}));
+  assert(!matchesMaterial(m,{query:"rgx100",language:"ไทย"}));
+  assert.equal(d.requests[0].status,"已交付");
+  assert.equal((await h.get("/api/admin/audience-preview",{id:m.id,userId:"partnerVn"})).status,403);
+  await h.act({op:"createOpportunity",name:"学校"});
+  await h.act({op:"createOpportunity",name:"门店"});
+  const list=(await h.data()).opportunities[0];
+  await h.act({op:"saveOpportunityItem",listId:list.id,mid:m.id});
+  assert.equal((await h.data()).opportunities[0].items[0].status,"可用");
+  await h.user("partnerVn");
+  const pending=(await h.data()).requests[0];
+  assert.equal(pending.status,"处理中"); assert.equal(pending.promised,"2033-09-01");
+  assert(!pending.material);assert(!(await h.data()).opportunities.length);
+  await h.user("editor");
+  const report=await (await h.get("/api/admin/gaps")).json();
+  assert.equal(report.terms[0].count,1);assert(report.demand.some(x=>x.label.includes("TH · 经销")));
+  await h.act({op:"contentReview",id:m.id,version:m.version,ownerId:"reviewer",reviewOn:"2033-10-01",confirm:true});
+  await h.act({op:"contentReview",id:m.id,version:m.version,ownerId:"editor",reviewOn:"2033-10-05"},409);
+  await h.act({...save,req:"",mid:m.id});
+  const next=(await h.data()).admin.drafts[0];
+  await h.user("reviewer");await h.act({op:"review",id:next.id,approve:true});
+  await h.user("partner");
+  assert.equal((await h.data()).opportunities[0].items[0].status,"已换版");
+  await h.act({op:"saveOpportunityItem",listId:list.id,mid:m.id});
+  await h.user("editor");await h.act({op:"withdraw",id:m.id,version:2,comment:"更新规格"});
+  await h.user("partner");
+  const old=(await h.data()).opportunities[0].items[0];
+  assert.equal(old.status,"已下架");assert.equal(old.mid,null);
+  await h.act({op:"removeOpportunityItem",listId:list.id,key:old.key});
+  assert.equal((await h.data()).opportunities[0].items.length,0);
+});
+
+test("unattended writer publishes once and queues notices before any visitor reads",async t=>{
+  const start=Date.now();
+  t.mock.timers.enable({apis:["Date"],now:start});
+  const env={...backend(),SHARED_DEMO_SPACE:"deedeedd-beef-4000-8000-000000000000",PRIVATE_SITE_MAINTENANCE:"enabled"};
+  const h=harness(env);
+  await h.data();await h.user("editor");
+  const base=(await h.data()).admin.published.find(m=>m.id==="retail");
+  await h.act({...base,id:"",mid:base.id,op:"save",submit:true,publishAt:new Date(start+30000).toISOString()});
+  const draft=(await h.data()).admin.drafts[0];
+  await h.user("reviewer");await h.act({op:"review",id:draft.id,approve:true});
+  const tick=()=>worker.fetch(new Request("https://local.test/internal/maintenance",{method:"POST",headers:{"x-material-task":"release-due"}}),env);
+  assert.equal((await worker.fetch(new Request("https://local.test/internal/maintenance"),env)).status,403);
+  t.mock.timers.setTime(start+30001);
+  const first=await (await tick()).json();
+  assert.equal(first.released,1);assert(first.notified>0);
+  const receipt=JSON.parse(await (await env.BUCKET.get("maintenance/"+env.SHARED_DEMO_SPACE)).text());
+  assert.deepEqual(receipt,first);
+  const repeat=await (await tick()).json();
+  assert.equal(repeat.released,0);assert.equal(repeat.notified,0);
+  await h.user("partner");assert((await h.data()).notices.some(n=>n.mid===base.id));
+});
+
+test("paged PDF preview isolates the selected visual page and rechecks attachment access", async () => {
+  const { PDFDocument, PDFName, PDFString } = await import("pdf-lib");
+  const source = await PDFDocument.create();
+  source.setTitle("Unpublished source metadata");
+  source.addPage().drawText("First page");
+  const second = source.addPage();
+  second.drawText("Second page");
+  const privateNote = source.context.obj({ Type: "Annot", Subtype: "Text", Contents: PDFString.of("Private review note") });
+  second.node.set(PDFName.of("Annots"), source.context.obj([source.context.register(privateNote)]));
+  await source.attach(new TextEncoder().encode("Source-only attachment"), "private.txt");
+  const original = await source.save();
+  const h = harness();
+  await h.user("editor");
+  const form = new FormData();
+  form.append("file", new Blob([original]), "two-pages.pdf");
+  const file = await (await h.get("/api/upload", form)).json();
+  const rules = [{ role: "伙伴", bg: "EBG", region: "东南亚", country: ["VN"], channel: ["集成"] }];
+  await h.act({ op: "save", title: "图文预览", summary: "两页", submit: true, bg: "EBG",
+    cat: "园区网络", type: "客户案例", defaultView: rules, defaultDownload: [],
+    files: [{ id: file.id, inherit: true, usage: "伙伴学习" }] });
+  await h.user("reviewer");
+  const draft = (await h.data()).admin.drafts[0];
+  const draftPreview = "/api/file?draft=1&m=" + draft.id + "&f=" + file.id + "&mode=layout";
+  assert.deepEqual(await (await h.get(draftPreview)).json(), { count: 2, type: "pdf" });
+  await h.act({ op: "review", approve: true, id: draft.id });
+  await h.user("partnerVn");
+  const base = "/api/file?m=" + draft.mid + "&f=" + file.id;
+  assert.equal((await h.get(base + "&mode=download")).status, 403);
+  const layout = base + "&mode=layout";
+  assert.equal((await h.get(layout + "&page=3")).status, 404);
+  const page = await h.get(layout + "&page=2");
+  assert.equal(page.headers.get("content-type"), "application/pdf");
+  const derived = await PDFDocument.load(await page.arrayBuffer(), { updateMetadata: false });
+  assert.equal(derived.getPageCount(), 1);
+  assert.equal(derived.getTitle(), undefined);
+  assert(!derived.catalog.toString().includes("Names"));
+  assert(!derived.context.enumerateIndirectObjects().some(([,object]) => object.toString().includes("Private review note")));
+  await h.user("partner");
+  assert.equal((await h.get(layout + "&page=2")).status, 404);
+  await h.user("editor");
+  await h.act({ op: "withdraw", id: draft.mid, comment: "验收结束" });
+  await h.user("partnerVn");
+  assert.equal((await h.get(layout + "&page=2")).status, 404);
+});
+
+test("a merged request is delivered separately to every eligible submitter", async()=>{
+  const h=harness();
+  await h.data();
+  const users=["partner","partnerVn","sales"];
+  const requests=[];
+  for(const id of users){
+    await h.user(id);
+    await h.act({op:"request",title:"门店统一制作",purpose:"内部研究"});
+    requests.push((await h.data()).requests[0].id);
+  }
+  await h.user("editor");
+  for(const id of requests.slice(1)) await h.act({op:"mergeDemand",id:requests[0],childId:id});
+  await h.act({op:"mergeDemand",id:requests[1],childId:requests[0]},409);
+  const f=new FormData();f.append("file",new Blob(["统一介绍"]),"统一.txt");
+  const original=await (await h.get("/api/upload",f)).json();
+  const rules=[{role:"全部",bg:"EBG",country:"全部",region:"全部",channel:"全部"}];
+  await h.act({op:"save",summary:"门店案例",title:"门店方案",type:"客户案例",cat:"园区网络",bg:"EBG",files:[{id:original.id,inherit:true,usage:"可发客户"}],
+    defaultView:rules,defaultDownload:rules,submit:true,req:requests[0],deliveryFiles:[original.id]});
+  const draft=(await h.data()).admin.drafts[0];
+  await h.user("reviewer");await h.act({op:"review",id:draft.id,approve:true});
+  for (const [i,id] of users.entries()){
+    await h.user(id);
+    const s=await h.data();
+    assert(s.requests.some(r=>r.id===requests[i] && r.material===draft.mid && r.status==="已交付"));
+    assert.equal(s.notices.filter(n=>n.rid===requests[i]).length,1);
+    assert(!s.notices.some(n=>n.rid && n.rid!==requests[i]));
+  }
+});

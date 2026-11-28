@@ -1,0 +1,7 @@
+.document-preview{margin-top:1rem;min-width:0}
+.preview-tools{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:.5rem;margin:.65rem 0;color:#243950;font-size:.9rem}
+.preview-tools button{min-width:2.3rem;min-height:2.2rem;padding:.25rem .65rem;border:1px solid #d9e1e9;background:white;border-radius:.45rem;color:#263d52;cursor:pointer;font:inherit}
+.preview-tools button:disabled{opacity:.4;cursor:default}
+.preview-paper{overflow:auto;max-height:68vh;overscroll-behavior:contain;border:1px solid #d9e1e9;border-radius:.5rem;background:#eff3f6}
+.preview-paper>div{margin:0 auto}
+.preview-paper .preview-img,.preview-paper canvas{display:block;width:100%;max-width:none;height:auto;max-height:none;margin:0;object-fit:contain;border-radius:0}

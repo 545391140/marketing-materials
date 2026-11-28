@@ -42,7 +42,7 @@ export function visible(m, u, catalog = [], visited = new Set()) {
       canDownload: fileAllowed(u, f.download,"download"),
     }));
   if (!files.length) return null;
-  const { defaultView, defaultDownload, files: orig, ...meta } = m;
+  const { defaultView, defaultDownload, files: orig, ownerId, reviewReminder, reviewRevision, reviewOn, reviewedAt, ...meta } = m;
   return { ...meta, files };
 }
 export function str(v, n = 240) {

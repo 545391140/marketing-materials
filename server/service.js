@@ -1,3 +1,5 @@
+import { opportunities, editOpportunity, recordSearch, directoryOptions, validDay } from "./operations.js";
+import { searchContext, languages } from "../shared/discovery.js";
 import { systemView, administer } from "./system.js";
 import { effective, permittedUser, roleList, people } from "./roles.js";
 import { has, any, materialCaps } from "../shared/permissions.js";
@@ -22,6 +24,8 @@ import { audienceCatalog } from "./audience-catalog.js";
 import { profiles, taskNames } from "./seed.js";
 import { recipient, readState, update } from "./db.js";
 const stamp = () => new Date().toISOString();
+const tracks = (p,id) => p.fav.includes(id) || p.list.includes(id) ||
+  p.opportunities?.some(list => list.items.some(item => item.mid === id));
 const publicPerson = (u) => ({
   id: u.id,
   name: u.name,
@@ -30,7 +34,7 @@ const publicPerson = (u) => ({
 });
 function notifySaved(s, m, msg, excluded = new Set()) {
   for (const [to, p] of Object.entries(s.users))
-    if (!excluded.has(to) && (p.fav.includes(m.id) || p.list.includes(m.id)))
+    if (!excluded.has(to) && tracks(p,m.id))
       s.notices.unshift({
         key: uid(),
         to,
@@ -68,7 +72,7 @@ function expiryNotices(materials, p) {
       (m) =>
         m.expires &&
         m.expires <= cutoff &&
-        (p.fav.includes(m.id) || p.list.includes(m.id)),
+        tracks(p,m.id),
     )
     .map((m) => {
       const key = "expiry:" + m.id + ":" + m.version + ":" + m.expires;
@@ -134,10 +138,12 @@ export function snapshot(s, c, env, includeAdmin = true) {
       )
         ? r.material
         : null,
-      deliveryFiles: undefined,
+      deliveryFiles: undefined, parentId:undefined,
     }));
   const out = {
     user: {...publicPerson(u),scopes:u.scopes,root:u.root},
+    affiliations: u.grants.filter(g=>has(u,"request",g.bg)).map(({bg,region,country,channel})=>({bg,region,country,channel})),
+    opportunities: has(u,"personal") ? opportunities(s,u,materials) : [],
     demo: c.demo,
     choices: c.demo ? Object.values(profiles).map(publicPerson) : [],
     materials,
@@ -151,7 +157,7 @@ export function snapshot(s, c, env, includeAdmin = true) {
       ...expiryNotices(materials, p),
     ] : [],
     prefs: !has(u,"personal") ? {fav:[],list:[],deadline:"",notes:""} : {
-      ...p,
+      ...p, opportunities: undefined,
       fav: p.fav.filter((id) => ids.has(id)),
       list: p.list.map((id) => (ids.has(id) ? id : null)),
     },
@@ -170,6 +176,7 @@ export function snapshot(s, c, env, includeAdmin = true) {
       reviewerChoices:c.demo && has(u,"flow") ? people(s,c).map(p=>({id:p.id,name:p.name,bgs:effective(s,p,c,env).scopes.filter(g=>has(u,"flow",g.bg) && g.caps.includes("review")).map(g=>g.bg)})).filter(p=>p.bgs.length):[],
       reviewerRoles:roleList(s).filter(r=>r.caps.includes("review")).map(({id,name})=>({id,name})),
       audienceCatalog: audienceCatalog(c),
+      accountOptions:directoryOptions(s,c,env),
       managementBgs: [...new Set(u.grants.map((g) => g.bg))],
       pendingUploads: has(u,"edit")?pendingUploads(s, u):[],
       approvalRules: (s.approvalRules || []).filter((r) => any(u,["edit","flow"],r.bg)).sort((a, b) => a.priority - b.priority),
@@ -228,6 +235,20 @@ function stopSchedule(s, d, u, reason) {
   }
   log(s, u, "取消定时发布", d.id, { materialId: d.mid, title: d.title, bg: d.bg, note: reason });
 }
+async function deliverMerged(s,parent,m,recipientUser,files,u) {
+  let delivered=0;
+  for(const child of s.requests.filter(x=>x.parentId===parent.id && x.status==="合并处理中")) {
+    if(deliver(s,child,m,await recipientUser(child.by),files)) {
+      delivered++;
+      note(s,child,u,"资料已发布并交付");
+    }
+    else {
+      child.parentId=""; child.status="处理中";
+      note(s,child,u,"当前版本未满足此需求的权限或用途，已单独跟进");
+    }
+  }
+  return delivered;
+}
 async function publishApproved(s, d, u, stageNote, comment, recipientUser) {
   const prev = s.materials.find(m => m.id === d.mid);
   const req = linkedRequest(s, d);
@@ -242,8 +263,12 @@ async function publishApproved(s, d, u, stageNote, comment, recipientUser) {
     deliveryFiles,
     ...meta
   } = d;
+  if(prev && (prev.reviewRevision||0)>(d.baseReviewRevision||0)) {
+    meta.owner=prev.owner;meta.ownerId=prev.ownerId;meta.reviewOn=prev.reviewOn;
+  }
+  delete meta.baseReviewRevision;
   const m = {
-    ...meta,
+    ...meta,reviewRevision:prev?.reviewRevision||0,
     id: mid,
     published: true,
     version: baseVersion + 1,
@@ -260,6 +285,7 @@ async function publishApproved(s, d, u, stageNote, comment, recipientUser) {
       note(s, req, u, "需另备符合用途的版本");
     }
   }
+  if(req) await deliverMerged(s,req,m,recipientUser,deliveryFiles,u);
   log(s, u, "审核发布 v" + m.version, m.id, {
     materialId: m.id, title: m.title, bg: m.bg, version: m.version,
     note: [stageNote, m.revisionNote, comment].filter(Boolean).join(" · "),
@@ -269,8 +295,16 @@ async function publishApproved(s, d, u, stageNote, comment, recipientUser) {
 export async function releaseDue(env, ns) {
   const stored = await readState(env, ns);
   const due = d => d.state === scheduled && Date.parse(d.publishAt) <= Date.now();
-  if (!stored.s.drafts.some(due)) return stored;
-  await update(env, ns, async s => {
+  const dueReview = m => active(m) && m.ownerId && m.reviewOn && m.reviewOn<=day() &&
+    m.reviewReminder !== [m.version,m.ownerId,m.reviewOn,m.reviewRevision||0].join("/");
+  if (!stored.s.drafts.some(due) && !stored.s.materials.some(dueReview)) return {...stored,released:0,notified:0};
+  const counts=await update(env, ns, async s => {
+    let released=0;
+    const before=s.notices.length;
+    for (const m of s.materials.filter(dueReview)) {
+      m.reviewReminder=[m.version,m.ownerId,m.reviewOn,m.reviewRevision||0].join("/");
+      s.notices.unshift({to:m.ownerId,key:uid(),studio:true,mid:m.id,msg:"请复核《"+m.title+"》v"+m.version+" 的内容有效性",date:day(),read:false});
+    }
     for (const d of s.drafts.filter(due).sort((a,b) => a.publishAt.localeCompare(b.publishAt))) {
       const u = d.releaseApproval;
       const prev = s.materials.find(m => m.id === d.mid);
@@ -282,6 +316,7 @@ export async function releaseDue(env, ns) {
         stopSchedule(s, d, u, "资料版本、有效期或引用证据已变化，请复核后重新送审");
         continue;
       }
+      const previousNotices=s.notices.length;
       await publishApproved(s, d, u, u.stageNote, u.comment,
         async id => {
           try {
@@ -291,15 +326,27 @@ export async function releaseDue(env, ns) {
             return null;
           }
         });
+      released++;
+      const m=s.materials.find(x=>x.id===d.mid);
+      const notified=new Set(s.notices.slice(0,s.notices.length-previousNotices).map(n=>n.to));
+      for(const p of people(s,ctx)) {
+        const account=effective(s,p,ctx,env);
+        if(p.active===false || !["sales","partner"].includes(p.role) || notified.has(p.id) ||
+          !has(account,"personal") || !visible(m,account,s.materials)) continue;
+        s.notices.unshift({to:p.id,key:uid(),mid:m.id,date:day(),read:false,msg:"《"+m.title+"》v"+m.version+" 已按计划发布"});
+      }
     }
+    return {released,notified:s.notices.length-before};
   });
-  return readState(env, ns);
+  return {...await readState(env,ns),...counts};
 }
 export async function change(s, c, env, a) {
   const op=a.op;
+  if (["createOpportunity","saveOpportunityItem","removeOpportunityItem"].includes(op)) return editOpportunity(s,c.u,a);
+  if (op==="searchMiss") return recordSearch(s,c.u,a);
   if(["saveRole","assignRoles","syncDirectory"].includes(op)) return administer(s,c,env,a);
   const caps={fav:"personal",list:"personal",checklist:"personal",read:"personal",request:"request",reply:"request",
-    claim:"demand",assign:"assign",ask:"demand",decline:"demand",deliver:"demand",library:"catalog",savePack:"kitEdit",
+    planDemand:"demand",mergeDemand:"demand",contentReview:"edit",claim:"demand",assign:"assign",ask:"demand",decline:"demand",deliver:"demand",library:"catalog",savePack:"kitEdit",
     packReview:"review",save:"edit",cancelSchedule:"edit",withdraw:"withdraw",review:"review",saveFlow:"flow",reassignStep:"flow"};
   const cap=caps[op];
   need(cap && has(c.u,cap),403,"当前账号缺少此操作权限");
@@ -350,7 +397,10 @@ export async function change(s, c, env, a) {
         )
       : null;
     if (a.subjectId) need(subject, 404, "资料不可用");
+    const affiliation=u.grants[a.affiliation ?? 0];
+    need(affiliation,400,"请选择有效签约关系");
     const r = {
+      searchContext:searchContext(a.searchContext),country:affiliation.country || "",channel:affiliation.channel || "",
       category: subject ? "资料纠错" : "资料需求",
       subjectId: subject?.id || "",
       id: "RQ-" + uid().slice(0, 8),
@@ -360,7 +410,7 @@ export async function change(s, c, env, a) {
       due: checkDate(a.due),
       external: !!a.external,
       needDownload: !!a.needDownload,
-      bg: subject?.bg || u.grants[0]?.bg || "未分派",
+      bg: subject?.bg || affiliation.bg || "未分派",
       by: u.id,
       name: u.name,
       owner: subject?.owner || "",
@@ -389,24 +439,67 @@ export async function change(s, c, env, a) {
     );
     return r;
   };
+  if (op==="contentReview") {
+    const m=s.materials.find(x=>x.id===a.id);
+    need(m && manages(u,m),403,"没有该资料的复核权限");
+    need(m.version===a.version && (m.reviewRevision||0)===(a.reviewRevision||0),409,"复核记录已更新，请刷新");
+    const owner=await recipientUser(a.ownerId);
+    need(owner && has(owner,"edit",m.bg),400,"负责人须有该 BG 的编辑权限");
+    const reviewOn=validDay(a.reviewOn);
+    need(reviewOn>=day(),400,"下次复核日期已过");
+    if(m.ownerId!==owner.id && u.id!==owner.id) s.notices.unshift({
+      to:owner.id,key:uid(),mid:m.id,msg:"你已接手《"+m.title+"》的内容复核，截止 "+reviewOn,date:day(),read:false,studio:true
+    });
+    m.ownerId=owner.id; m.owner=owner.name; m.reviewOn=reviewOn;
+    m.reviewRevision=(m.reviewRevision||0)+1;
+    if(a.confirm) m.reviewedAt=stamp();
+    log(s,u,a.confirm?"已确认内容仍有效":"更新复核责任",m.id,{materialId:m.id,bg:m.bg,title:m.title,note:owner.name+" · "+reviewOn});
+    return;
+  }
+  if (op==="mergeDemand" || op==="planDemand") {
+    const r=request(a.id);
+    need(!["已交付","已关闭"].includes(r.status) && !r.parentId,409,"请选择未结束的主需求");
+    if(op==="planDemand") {
+      r.promised=validDay(a.promised);
+      for(const member of s.requests.filter(x=>x.id===r.id || x.parentId===r.id)) {
+        if(["已交付","已关闭"].includes(member.status)) continue;
+        member.promised=r.promised;
+        note(s,member,u,"承诺交付日期 "+r.promised);
+        message(s,member,"资料预计于 "+r.promised+" 交付");
+      }
+    } else {
+      const child=request(a.childId);
+      need(r.id!==child.id && r.bg===child.bg && !child.parentId && !s.requests.some(x=>x.parentId===child.id) &&
+        !["已交付","已关闭","审核中","待定时发布"].includes(child.status),409,"请选择同 BG 可合并的独立需求");
+      child.parentId=r.id; child.status="合并处理中"; child.promised=r.promised||"";
+      child.owner=r.owner; note(s,child,u,"已纳入同类需求统一制作");
+      note(s,r,u,"合并需求 "+child.id);
+    }
+    return;
+  }
   if (["claim", "assign", "ask", "decline", "deliver"].includes(op)) {
     const r = request(a.id);
     need(!["已交付", "已关闭"].includes(r.status), 409, "需求已结束");
+    need(!r.parentId,409,"请从主需求处理");
     if (op === "deliver") {
       const m = s.materials.find((x) => x.id === a.mid);
       need(m && manages(u, m), 404, "资料不可用");
-      need(
-        deliver(s, r, m, await recipientUser(r.by), a.files || []),
-        409,
-        "所选资料不符合提交人的权限或用途",
-      );
-      note(s, r, u, "已交付资料");
+      const files=a.files || [];
+      const parentDelivered=deliver(s,r,m,await recipientUser(r.by),files);
+      const childCount=await deliverMerged(s,r,m,recipientUser,files,u);
+      need(parentDelivered || childCount,409,"所选资料不符合提交人的权限或用途");
+      if(parentDelivered) note(s,r,u,"已交付资料");
+      else {
+        r.status="处理中";
+        note(s,r,u,"已向有权限的关联需求交付，主需求待补充适用版本");
+      }
       return;
     }
     if (op === "assign") {
       r.owner = brief(a.owner);
       need(r.owner, 400, "填写负责人");
       r.status = "处理中";
+      for (const child of s.requests.filter(x=>x.parentId===r.id && x.status==="合并处理中")) child.owner=r.owner;
       note(s, r, u, "已分派给 " + r.owner);
       return;
     }
@@ -417,6 +510,12 @@ export async function change(s, c, env, a) {
       need(str(a.comment), 400, "请填写说明");
       r.status = op === "ask" ? "待补充" : "已关闭";
       message(s, r, op === "ask" ? "资料需求待补充" : "资料需求已有处理说明");
+    }
+    for (const child of s.requests.filter(x=>x.parentId===r.id && x.status==="合并处理中")) {
+      if(op==="claim") child.owner=r.owner;
+      if(op==="decline") {
+        child.status="已关闭";note(s,child,u,str(a.comment,1500));message(s,child,"资料需求已有处理说明");
+      }
     }
     note(s, r, u, str(a.comment, 1500) || "已认领");
     return;
@@ -620,7 +719,7 @@ export async function change(s, c, env, a) {
     });
     const assigned = a.req ? request(a.req) : null;
     if (assigned)
-      need(!["已交付", "已关闭"].includes(assigned.status), 409, "需求已结束");
+      need(!assigned.parentId && !["已交付", "已关闭"].includes(assigned.status), 409, "需求已结束");
     const proof = a.proofId
       ? s.materials.find((x) => x.id === a.proofId)
       : null;
@@ -633,7 +732,16 @@ export async function change(s, c, env, a) {
     const product = brief(a.product ?? previous?.product), solution = brief(a.solution ?? previous?.solution);
     need((!product || s.library.products?.includes(product)) &&
       (!solution || s.library.solutions?.includes(solution)), 400, "请选择目录中的产品和方案");
+    const language=brief(a.language ?? previous?.language);
+    need(!language || languages.includes(language),400,"请选择有效的资料语言");
+    const markets=listTags(a.markets ?? previous?.markets);
+    need(markets.every(x=>x==="全球" || catalog.countries.some(c=>c.value===x)),400,"请选择有效适用国家");
+    const ownerId=brief(a.ownerId || previous?.ownerId || u.id);
+    const owner=ownerId===u.id ? u : await recipientUser(ownerId);
+    need(owner && has(owner,"edit",bg),400,"负责人须有该 BG 的编辑权限");
     const d = {
+      language,models:listTags(a.models ?? previous?.models),aliases:listTags(a.aliases ?? previous?.aliases),
+      markets, ownerId, baseReviewRevision:old?.baseReviewRevision ?? base?.reviewRevision ?? 0, reviewOn:a.reviewOn ? validDay(a.reviewOn) : previous?.reviewOn || new Date(Date.now()+90*86400000).toISOString().slice(0,10),
       product, solution,
       proofId: proof?.id || "",
       proofVersion: proof?.version || 0,
@@ -668,7 +776,7 @@ export async function change(s, c, env, a) {
       ),
       state: a.submit ? "待审核" : "草稿",
       author: u.id,
-      owner: u.name,
+      owner: owner.name,
       updated: day(),
     };
     d.approval = a.submit ? await startApproval(s, d,c,env) : null;

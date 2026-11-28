@@ -1,3 +1,4 @@
+import {readPreview} from "./document-preview.js";
 import Vue from "vue";
 import Studio from "./studio.js";
 import { call, fileUrl } from "./shared.js";
@@ -108,21 +109,13 @@ new Vue({
       }
     },
     async previewFile(m, f) {
-      const view = { title: f.name, loading: true, text: "", img: "" };
+      const view = { title: f.name, loading: true };
       this.preview = view;
-      const url = fileUrl(m, f, "preview", true);
       try {
-        if (["jpg", "jpeg", "png"].includes(f.ext)) view.img = url;
-        else {
-          const res = await fetch(url);
-          const data = await res.json();
-          if (!res.ok) throw Error(data.error);
-          view.text = data.text;
-        }
+        const result = await readPreview(fileUrl(m, f, "preview", true), f);
+        if (this.preview === view) this.preview = { ...view, ...result, loading: false };
       } catch (e) {
-        view.text = e.message;
-      } finally {
-        view.loading = false;
+        if (this.preview === view) this.preview = { ...view, text: e.message, loading: false };
       }
     },
   },

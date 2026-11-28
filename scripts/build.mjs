@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { constants, gzipSync, zstdCompressSync } from "node:zlib";
+import { constants, zstdCompressSync } from "node:zlib";
 const manifest = JSON.parse(await fs.readFile(".openai/hosting.json", "utf8"));
 const adminManifest = JSON.parse(
   await fs.readFile("hosting/admin/.openai/hosting.json", "utf8")
@@ -21,6 +21,7 @@ async function bundleApp(side) {
     write: false,
     platform: "browser",
     loader: { ".html": "text" },
+    external: ["/pdf.min.mjs"],
     target: "es2020",
     alias: { vue: "vue/dist/vue.esm.js" },
     define: { "process.env.NODE_ENV": '"production"' },
@@ -28,7 +29,7 @@ async function bundleApp(side) {
   const assets = {};
   function add(k, v, type) {
     const compressed = !type.startsWith("image/");
-    const bytes = compressed ? gzipSync(v, { level: 9 }) : Buffer.from(v);
+    const bytes = compressed ? zstdCompressSync(v, { params: { [constants.ZSTD_c_compressionLevel]: 19 } }) : Buffer.from(v);
     assets[k] = { data: bytes.toString("base64"), type, compressed };
   }
   add(
@@ -36,7 +37,9 @@ async function bundleApp(side) {
     built.outputFiles[0].contents,
     "application/javascript"
   );
-  add("/style.css", await fs.readFile("client/style.css"), "text/css");
+  add("/style.css", (await fs.readFile("client/style.css", "utf8")) + "\n" + (await fs.readFile("client/preview.css", "utf8")), "text/css");
+  for (const name of ["pdf.min.mjs", "pdf.worker.min.mjs"])
+    add("/" + name, await fs.readFile("node_modules/pdfjs-dist/build/" + name), "application/javascript");
   let html = await fs.readFile("client/index.html", "utf8");
   if (admin) {
     html = html
@@ -100,6 +103,13 @@ async function bundleApp(side) {
           },
         },
       ],
+      loader: { ".zst": "binary" },
+      // Select the OOXML layout readers from the pinned engine. Spreadsheet,
+      // legacy binary, encryption and export engines are outside this bundle.
+      alias: {
+        "partner:pptx-reader": path.resolve("node_modules/reamkit/dist/esm/pptx/pptx-reader.js"),
+        "partner:office-options": path.resolve("node_modules/reamkit/dist/esm/core/converter/project.js")
+      },
       external: ["node:*"],
       define: { "process.env.NODE_ENV": '"production"' },
     });

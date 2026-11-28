@@ -1,3 +1,6 @@
+import {readPreview} from "./document-preview.js";
+import { matchesMaterial, searchContext, languages } from "../shared/discovery.js";
+import opportunityLists from "./opportunities.js";
 import { has } from "../shared/permissions.js";
 import Vue from "vue";
 import Vuex from "vuex";
@@ -9,6 +12,7 @@ import overlays from "./overlays.html";
 Vue.use(Vuex);
 Vue.use(VueI18n);
 Vue.component("resource-card", card);
+Vue.component("opportunity-lists",opportunityLists);
 const store = new Vuex.Store({
   state: { data: null },
   mutations: {
@@ -56,6 +60,7 @@ const app = new Vue({
       ind: "",
       task: "",
       sort: "new",
+      language:"", market:"", languages,
       filters: false,
       account: false,
       menu: false,
@@ -104,7 +109,7 @@ const app = new Vue({
         ["回应客户问题", "选型依据与应答指南", "MessagesSquare", "green"],
         ["准备投标", "参数、资质与授权核对", "ClipboardCheck", "amber"],
       ],
-      tabs: ["我的收藏", "任务清单", "我的需求", "站内消息"],
+      tabs: ["我的收藏", "任务清单", "商机清单", "我的需求", "站内消息"],
     };
   },
   computed: {
@@ -121,29 +126,10 @@ const app = new Vue({
     staff() {
       return !!this.d?.canManage;
     },
+    searchFilters(){return searchContext(this);},
+    markets(){return [...new Set(this.d.materials.flatMap(m=>m.markets||[]))].sort();},
     filtered() {
-      let out = this.d.materials.filter(
-        (m) =>
-          (this.type === "全部" || m.type === this.type) &&
-          (!this.cat || m.cat === this.cat) &&
-          (!this.ind || m.industry === this.ind) &&
-          (!this.task || m.task === this.task) &&
-          (!this.query ||
-            [
-              m.title,
-              m.en,
-              m.type,
-              m.cat,
-              m.industry,
-              m.summary,
-              m.opening,
-              m.advice,
-              ...m.tags,
-            ]
-              .join(" ")
-              .toLowerCase()
-              .includes(this.query.trim().toLowerCase())),
-      );
+      let out = this.d.materials.filter(m=>matchesMaterial(m,this.searchFilters));
       return out.sort((a, b) =>
         this.sort === "name"
           ? a.title.localeCompare(b.title, "zh")
@@ -353,10 +339,16 @@ const app = new Vue({
       this.cat = "";
       this.ind = "";
       this.task = "";
-      this.sort = "new";
+      this.sort = "new"; this.language=""; this.market="";
+    },
+    measureSearch() {
+      clearTimeout(this.measureTimer);
+      this.measureTimer=setTimeout(()=>{
+        if(this.page==="library" && !this.filtered.length) call("actions",{op:"searchMiss",filters:this.searchFilters}).catch(()=>{});
+      },400);
     },
     search() {
-      this.resetFilters();
+      this.measureSearch();
       this.mobileSearch = false;
       this.nav("library");
     },
@@ -394,7 +386,9 @@ const app = new Vue({
     },
     requestForm() {
       this.form = initialForm();
-      this.form.title = this.query;
+      this.form.searchContext=this.page==="library" || this.page==="discover" ? this.searchFilters : null;
+      this.form.title=this.query || [this.type==="全部"?"":this.type,this.cat,this.language,this.task].filter(Boolean).join(" · ");
+      this.form.affiliation=0;
       this.modal = "request";
     },
     reportMaterial(m) {
@@ -416,6 +410,7 @@ const app = new Vue({
     },
     async openNotice(n) {
       await this.action({ op: "read", key: n.key }, "");
+      if(n.studio && this.staff){location.assign("/manage");return;}
       if (n.rid) this.showReq(n.rid);
       else {
         const m = this.d.materials.find((x) => x.id === n.mid);
@@ -433,16 +428,8 @@ const app = new Vue({
       this.modal = "preview";
       try {
         const url = fileUrl(m, f, "preview", draft);
-        if (["jpg", "jpeg", "png"].includes(f.ext)) {
-          if (seq === this.previewSeq)
-            this.preview = { ...this.preview, img: url, loading: false };
-        } else {
-          const res = await fetch(url);
-          const j = await res.json();
-          if (!res.ok) throw Error(j.error);
-          if (seq === this.previewSeq)
-            this.preview = { ...this.preview, text: j.text, loading: false };
-        }
+        const result = await readPreview(url, f);
+        if (seq === this.previewSeq) this.preview = { ...this.preview, ...result, loading: false };
       } catch (e) {
         if (seq === this.previewSeq)
           this.preview = { ...this.preview, text: e.message, loading: false };

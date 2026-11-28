@@ -161,16 +161,15 @@ export async function call(path, body) {
 }
 export const tasks = ["准备客户拜访", "回应客户问题", "准备投标"];
 export const card = {
-  props: ["m", "saved", "lang"],
+  props: ["m", "saved", "lang", "previewCover", "readonly"],
   methods: {
     date,
+    formats(m) { return [...new Set(m.files.map(f=>f.ext.toUpperCase()))].join("、"); },
+    usages(m) { return [...new Set(m.files.map(f=>this.txt(f.usage)))].join(" · "); },
     txt(s) {
       return this.$root.tx(s);
     },
   },
   template:
-    `<article class="resource"><button type="button" class="card-image" @click="$emit('open',m)" :aria-label="m.title"><img :src="m.coverId?'/api/cover?m='+m.id:'/img/'+m.img+'.webp'" :alt="m.title" loading="lazy"><span class="badge badge-photo">{{txt(m.type)}}</span></button><button v-if="$root.canFront('personal')" type="button" class="bookmark" :class="{saved}" @click="$emit('fav',m)" :aria-pressed="String(saved)" :aria-label="txt(saved?'已收藏':'收藏')"><ic n="Bookmark" :size="16"/></button><div class="resource-body"><div class="resource-tags"><span>{{m.industry}}</span><i></i><span>{{m.cat}}</span></div><button class="card-name" @click="$emit('open',m)">{{lang==='en'&&m.en?m.en:m.title}}</button><p>{{m.summary}}</p><div class="resource-foot"><span class="filetype"><ic n="FileText" :size="13"/>{{(m.files[0]?.ext||'').toUpperCase()}}</span><span>{{date(m.updated)}}</span></div></div></article>`.replace(
-      "m.files[0]?.ext",
-      "m.files[0] && m.files[0].ext",
-    ),
+    `<article class="resource"><button type="button" class="card-image" @click="$emit('open',m)" :aria-label="m.title"><img :src="previewCover || (m.coverId?'/api/cover?m='+m.id:'/img/'+m.img+'.webp')" :alt="m.title" loading="lazy"><span class="badge badge-photo">{{txt(m.type)}}</span></button><button v-if="!readonly && $root.canFront('personal')" type="button" class="bookmark" :class="{saved}" @click="$emit('fav',m)" :aria-pressed="String(saved)" :aria-label="txt(saved?'已收藏':'收藏')"><ic n="Bookmark" :size="16"/></button><div class="resource-body"><div class="resource-tags"><span>{{m.industry}}</span><i></i><span>{{m.cat}}</span></div><button class="card-name" @click="$emit('open',m)">{{lang==='en'&&m.en?m.en:m.title}}</button><p>{{m.summary}}</p><div class="market-meta">{{m.language || txt('语言待标注')}} · {{(m.markets || []).join(' / ') || txt('适用国家待标注')}} · v{{m.version}}</div><small class="usage-summary">{{usages(m)}}</small><div class="resource-foot"><span class="filetype"><ic n="FileText" :size="13"/>{{formats(m)}} · {{m.files.length}} {{txt('个附件')}}</span><span>{{date(m.updated)}}</span></div></div></article>`,
 };

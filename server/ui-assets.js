@@ -1,9 +1,9 @@
-import { gunzipSync } from "fflate";
+import { decompress } from "fzstd";
 export function serveAsset(assets, path) {
   const a = assets[path === "/" ? "/index.html" : path];
   if (!a) return new Response("Not found", { status: 404 });
   const bytes = Uint8Array.from(atob(a.data), (c) => c.charCodeAt(0));
-  return new Response(a.compressed ? gunzipSync(bytes) : bytes, {
+  return new Response(a.compressed ? decompress(bytes) : bytes, {
     headers: {
       "content-type": a.type,
       "x-content-type-options": "nosniff",

@@ -1,3 +1,5 @@
+import { audienceCheck,reviewRecord,gapPanel } from "./editor-tools.js";
+import { languages } from "../shared/discovery.js";
 import systemAdmin from "./system-admin.js";
 import {has,menus} from "../shared/permissions.js";
 import flowConfig from "./flow-config.js";
@@ -26,7 +28,7 @@ const blank = () => ({
   evidence: "",
   proofId: "",
   support: "",
-  expires: "",
+  expires: "",language:"", markets:[],models:[],aliases:[],ownerId:"",reviewOn:"",
   publishAt: "",
   defaultView: rules(),
   defaultDownload: rules(),
@@ -38,7 +40,7 @@ const blank = () => ({
 export default {
   template,
   props: ["d", "busy"],
-  components: { ruleEditor, reviewScope, flowConfig, systemAdmin },
+  components: { audienceCheck,reviewRecord,gapPanel,ruleEditor, reviewScope, flowConfig, systemAdmin },
   data() {
     return {
       sim: { role: "伙伴", bg: "EBG", region: "东南亚", country: "TH", channel: "经销" },
@@ -59,7 +61,7 @@ export default {
       uploading: false,
       localError: "",
       review: null,
-      reqId: "",
+      reqId: "",mergeChild:"",promiseDate:"",modelsText:"",aliasesText:"",languages,
       comment: "",
       delivery: "",
       fileIds: [],
@@ -132,7 +134,7 @@ export default {
         { title: "待整理附件", count: this.a.pendingUploads.length, section: "待整理附件", icon: "UploadCloud" },
         { title: "待受理需求", count: this.a.queue.filter((r) => r.status === "待受理").length, section: "需求池", filter: "待受理", icon: "Inbox" },
         { title: "待我审核", count: this.a.drafts.filter(d=>canReview(d,this.d.user)).length + this.a.packDrafts.filter(d=>d.state==="待审核" && d.author!==this.d.user.id && this.can("review",d.bg)).length, section: "发布审核", icon: "ShieldCheck" },
-        ...["待定时发布", "已退回", "即将到期", "已过期", "证据待复核"].map((title) => ({
+        ...["待内容复核","待定时发布", "已退回", "即将到期", "已过期", "证据待复核"].map((title) => ({
           title, count: this.ledger.filter((m) => this.matchesState(m, title)).length,
           section: "资料管理", filter: title, icon: title === "已退回" ? "PenLine" : "Clock3",
         })),
@@ -175,6 +177,7 @@ export default {
       return this.$root.action(a, msg);
     },
     matchesState(m, filter) {
+      if (filter === "待内容复核") return m.published && (!m.ownerId || !m.reviewOn || m.reviewOn <= new Date().toISOString().slice(0,10));
       if (filter === "即将到期") return m.expiring;
       if (filter === "证据待复核") return m.published && m.proofNeedsReview;
       return !filter || m.state === filter;
@@ -247,6 +250,9 @@ export default {
         b.summary = r.purpose;
       }
       this.uploadScope = { inherit: true, view: [], download: [] };
+      if(!b.ownerId) b.ownerId=this.d.user.id;
+      if(!b.reviewOn) b.reviewOn=new Date(Date.now()+90*864e5).toISOString().slice(0,10);
+      this.modelsText=(b.models||[]).join("，"); this.aliasesText=(b.aliases||[]).join("，");
       this.form = b;
       this.tagText = b.tags.join("，");
       this.view = "edit";
@@ -316,6 +322,8 @@ export default {
       return this.previousMaterial.files.find((f) => f.id === id)?.[key] || [];
     },
     async save(submit) {
+      this.form.models=this.modelsText.split(/[,，]/).map(v=>v.trim()).filter(Boolean);
+      this.form.aliases=this.aliasesText.split(/[,，]/).map(v=>v.trim()).filter(Boolean);
       this.form.tags = this.tagText
         .split(/[,，]/)
         .map((s) => s.trim())
@@ -346,7 +354,7 @@ export default {
       this.$root.previewFile(m, f, true);
     },
     startReq(r) {
-      this.reqId = r.id;
+      this.reqId = r.id; this.mergeChild=""; this.promiseDate=r.promised||"";
       this.view = "req";
       this.comment = "";
       this.fileIds = [];

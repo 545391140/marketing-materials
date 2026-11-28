@@ -6,10 +6,11 @@ import jpeg from "jpeg-js";
 import { decode, encode } from "fast-png";
 import { extractText, getDocumentProxy } from "unpdf";
 let pdfResources;
-function readPdfResource(filename) {
+export function readPdfResource(filename) {
   pdfResources ??= decompress(
     Uint8Array.from(atob(cmaps.data), (c) => c.charCodeAt(0)),
   );
+  if (!Object.hasOwn(cmaps.index, filename)) return null;
   const [offset, length] = cmaps.index[filename];
   return pdfResources.slice(offset, offset + length);
 }
@@ -90,11 +91,6 @@ export async function inspect(bytes, ext) {
         .map((p, i) => "— " + (i + 1) + " —\n" + p)
         .join("\n\n")
         .slice(0, 70000);
-      need(
-        text.join("").trim().length,
-        422,
-        "此文件没有可提取的文字，请上传文字版 PDF 或图片",
-      );
       return { text: t };
     } finally {
       await pdf.cleanup?.();
@@ -132,6 +128,5 @@ export async function inspect(bytes, ext) {
     )
     .join("\n")
     .slice(0, 70000);
-  need(text.trim(), 422, "请提供包含文字的文档或图片");
   return { text };
 }

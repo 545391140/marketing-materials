@@ -40,7 +40,7 @@ export const groups = [
       ["分类与类型", "Settings2", ["catalog"]],
     ],
   ],
-  ["需求管理", [["需求池", "Inbox", ["demand", "assign"]]]],
+  ["需求管理", [["需求池", "Inbox", ["demand", "assign"]], ["资料缺口报表","Activity",["demand","audit"]]]],
   [
     "流程管理",
     [

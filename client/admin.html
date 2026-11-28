@@ -6,5 +6,5 @@
 <main v-if="d" class="wrap"><studio :key="d.user.id+JSON.stringify(d.user.scopes)" :d="d" :busy="busy"/></main>
 <main v-else class="boot">{{fatal||'正在校验管理权限…'}} <button v-if="fatal" class="btn" @click="reload">重新进入</button></main>
 <div v-if="preview" class="veil" @click.self="preview=null"><section class="dialog" role="dialog" aria-modal="true" :aria-label="preview.title"><button class="xbtn" @click="preview=null" aria-label="关闭预览"><ic n="X"/></button>
-<div class="dialog-body top-pad"><h2>{{preview.title}}</h2><p v-if="preview.loading">正在读取…</p><img v-if="preview.img" class="preview-img" :src="preview.img" :alt="preview.title"><pre v-else class="preview-text">{{preview.text}}</pre></div></section></div>
+<div class="dialog-body top-pad"><h2>{{preview.title}}</h2><p v-if="preview.loading">正在读取…</p><document-preview v-if="!preview.loading" :key="preview.title" :view="preview"/></div></section></div>
 <div v-if="alert" class="toast" role="status">{{alert}}</div></div>

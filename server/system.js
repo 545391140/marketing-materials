@@ -160,8 +160,8 @@ export async function administer(s, c, env, a) {
     a.bg
   );
 }
-function mismatch(u, rules) {
-  if (!rules?.length) return "此附件未配置查看受众";
+function mismatch(u, rules, cap = "browse") {
+  if (!rules?.length) return "此附件未配置受众";
   const labels = {
     bg: "BG",
     region: "区域",
@@ -224,4 +224,30 @@ export async function diagnose(s, c, env, a) {
       : "没有符合查看授权的附件",
     files,
   };
+}
+
+export async function audiencePreview(s,c,env,a) {
+  const draft=s.drafts.find(d=>d.id===a.id);
+  const m=draft || s.materials.find(m=>m.id===a.id);
+  const permitted=bg=>["edit","review","diagnose"].some(cap=>has(c.u,cap,bg));
+  need(m && permitted(m.bg),403,"没有此资料的受众预览权限");
+  const p=await recipient(c,env,a.userId);
+  need(p && p.active!==false && p.grants.some(g=>permitted(g.bg)),404,"账号超出管理范围");
+  const u=effective(s,p,c,env);
+  const proposed=draft ? {...m,id:m.mid,version:m.baseVersion+1,published:true} : m;
+  const catalog=[proposed,...s.materials.filter(x=>x.id!==proposed.id)];
+  const card=visible(proposed,u,catalog);
+  const files=m.files.map(f=>{
+    const canView=fileAllowed(u,f.view,"browse"), canDownload=fileAllowed(u,f.download,"download");
+    const reason=!has(u,"browse") ? "账号角色没有资料库权限" :
+      !active(proposed) ? "资料已过期或下架" :
+      !canView ? "查看范围 · "+mismatch(u,f.view) :
+      !card ? "引用证据已失效或不可见" :
+      !has(u,"download") ? "仅预览 · 角色缺少下载权限" :
+      !canDownload ? "仅预览 · 下载范围 · "+mismatch(u,f.download,"download") : "可预览并下载";
+    return {name:f.name,reason};
+  });
+  return {card:card && {id:card.id,img:card.img,coverId:card.coverId,title:card.title,summary:card.summary,
+    bg:card.bg,type:card.type,cat:card.cat,industry:card.industry,version:card.version,updated:card.updated,
+    language:card.language,markets:card.markets,files:card.files},files};
 }

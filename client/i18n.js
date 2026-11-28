@@ -1,4 +1,7 @@
 const en = {
+  "个附件":"files", "语言待标注":"Language unspecified", "适用国家待标注":"Markets unspecified", "适用国家":"Markets", "资料语言":"Material language", "全部语言":"All languages", "全部国家":"All markets",
+  "新商机清单":"New opportunity list","客户或项目名称":"Customer or project","创建清单":"Create list","选择商机":"Opportunity","商机清单":"Opportunity lists","加入商机清单":"Add to an opportunity","保存当前版本到清单":"Save this version","采用新版":"Use current version","从资料详情添加到这个商机。":"Add materials from their detail page.","签约关系":"Affiliation","承诺交付日期":"Committed delivery date","合并处理中":"In shared production","已换版":"Updated version","全球":"Global",
+
   反馈问题: "Report a problem",
   请描述资料中的问题: "What needs to be corrected?",
   查看引用依据: "View supporting evidence",

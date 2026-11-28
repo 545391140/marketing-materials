@@ -58,4 +58,5 @@ export async function sendPortalNotifications(
       }
     }
   });
+  return {sent:results.filter(r=>r.ok).length,deferred:results.filter(r=>!r.ok).length};
 }

@@ -4,10 +4,15 @@ import assets from "./built-assets.json";
 import { api } from "./api.js";
 import { sendPortalNotifications } from "./portal-notifications.js";
 import { releaseDue } from "./service.js";
-async function maintenance(env) {
+async function maintenance(env, receipt = false) {
   const ns = env.PC_SESSION_URL ? "portal" : env.LOCAL_WORKSPACE || env.SHARED_DEMO_SPACE;
-  if (ns) await releaseDue(env, ns);
-  await sendPortalNotifications(env);
+  if (!ns) return null;
+  const {released,notified}=await releaseDue(env,ns);
+  const dispatch=await sendPortalNotifications(env);
+  const result={checkedAt:new Date().toISOString(),released,notified,externalSent:dispatch?.sent||0,
+    externalDeferred:dispatch?.deferred||0};
+  if(receipt) await env.BUCKET.put("maintenance/"+ns,JSON.stringify(result));
+  return result;
 }
 export default {
   scheduled(event, env, ctx) {
@@ -15,6 +20,18 @@ export default {
   },
   async fetch(req, env, ctx) {
     const path = new URL(req.url).pathname;
+    if(path==="/internal/maintenance") {
+      // Only enable this ingress behind the owner-private Sites dispatch gate.
+      if(env.PRIVATE_SITE_MAINTENANCE!=="enabled" || env.LOCAL_RUNTIME) return new Response(null,{status:404});
+      if(!["GET","POST"].includes(req.method) || req.headers.get("x-material-task")!=="release-due") return new Response(null,{status:403});
+      if(req.method==="GET"){
+        const ns=env.PC_SESSION_URL?"portal":env.SHARED_DEMO_SPACE;
+        const receipt=ns && await env.BUCKET.get("maintenance/"+ns);
+        return Response.json(receipt?JSON.parse(await receipt.text()):null,{headers:{"cache-control":"no-store"}});
+      }
+      const result=await maintenance(env,true);
+      return Response.json(result||{error:"未配置共享发布空间"},{status:result?200:503,headers:{"cache-control":"no-store"}});
+    }
     if (path.startsWith("/api/")) {
       const result = await api(req, {
         ...env,

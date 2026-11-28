@@ -1579,3 +1579,13 @@ textarea {
 .entry-card form {display:grid; gap:1rem; margin:1.5rem 0}
 .entry-card select {display:block; width:100%; margin-top:.5rem; padding:.65rem}
 .admin-app .top-in {justify-content:space-between}
+
+.market-meta,.usage-summary{display:block;color:#49576c;font-size:.81rem;line-height:1.5}
+.market-meta{margin:.45rem 0 .2rem}.usage-summary{margin-bottom:.55rem}
+.opportunity-panel,.opportunity-picker,.content-ops{padding:1rem;border:1px solid #dce2e8;border-radius:12px;margin:.8rem 0;background:white}
+.opportunity-picker summary,.content-ops summary{cursor:pointer;font-weight:600}
+.opportunity-panel .tools-row,.content-ops .tools-row{align-items:flex-end;flex-wrap:wrap}
+.content-ops label,.opportunity-panel label{display:grid;gap:.3rem}
+.content-ops table{width:100%;border-collapse:collapse;font-size:.9rem}
+.content-ops th,.content-ops td{text-align:left;padding:.65rem;border-bottom:1px solid #e6ebef}
+.content-ops .resource{max-width:320px}.content-ops h3{margin-top:1.1rem}.content-ops .error{color:#a42b36}

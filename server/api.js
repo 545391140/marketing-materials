@@ -1,12 +1,14 @@
 import { effective, remember, knownProfile } from "./roles.js";
 import { has, any, materialCaps } from "../shared/permissions.js";
-import { diagnose } from "./system.js";
+import { gapReport } from "./operations.js";
+import { diagnose, audiencePreview } from "./system.js";
 import { identity, readState, update } from "./db.js";
 import { audienceCatalog } from "./audience-catalog.js";
 import { uid, need, staff, visible, manages, fileAllowed, active, validRules, subset } from "./access.js";
 import { snapshot, change, materialHistory, releaseDue } from "./service.js";
 import { profiles } from "./seed.js";
-import { inspect, mimes } from "./files.js";
+import { inspect, mimes, readPdfResource } from "./files.js";
+import { layoutPreview } from "./layout-preview.js";
 import pdfs from "./sample-pdf.json";
 const json = (v, status = 200) =>
   new Response(JSON.stringify(v), {
@@ -71,6 +73,18 @@ export async function api(req, env) {
       need(Object.hasOwn(profiles, id), 400, "身份无效");
       response = json({ ok: true });
       setCookie(response, "material_profile", id, url);
+    } else if (req.method === "GET" && path === "/api/admin/gaps") {
+      need(any(u,["demand","audit"]),403,"无权查看运营报表");
+      response=json(gapReport(stored.s,ctx,env));
+    } else if (req.method === "POST" && path === "/api/admin/audience-preview") {
+      response=json(await audiencePreview(stored.s,ctx,env,await req.json()));
+    } else if (req.method === "GET" && path === "/api/admin/card-cover") {
+      const s=stored.s;
+      const m=[...s.drafts,...s.materials].find(x=>x.id===url.searchParams.get("id"));
+      need(m && any(u,["edit","review","diagnose"],m.bg),404,"封面不可用");
+      const f=s.uploads?.[m.coverId], obj=f?.previewKey && await env.BUCKET.get(f.previewKey);
+      need(obj,404,"封面不可用");
+      response=fileResp(obj.body,f.mime,"cover");
     } else if (req.method === "POST" && path === "/api/diagnose") {
       response=json(await diagnose(stored.s,ctx,env,await req.json()));
     } else if (req.method === "POST" && path === "/api/actions") {
@@ -174,6 +188,11 @@ export async function api(req, env) {
       const o = await env.BUCKET.get(file.previewKey);
       need(o, 404, "封面不可用");
       response = fileResp(o.body, file.mime, "cover");
+    } else if (req.method === "GET" && path.startsWith("/api/preview-fonts/")) {
+      const filename = path.split("/").pop();
+      const font = readPdfResource(filename);
+      need(font, 404, "字体资源不可用");
+      response = new Response(font, {headers:{"content-type":"application/octet-stream"}});
     } else if (req.method === "GET" && path === "/api/file") {
       const { s } = stored,
         mid = url.searchParams.get("m"),
@@ -215,6 +234,25 @@ export async function api(req, env) {
           });
         });
         response = fileResp(body, mimes[f.ext], f.name, true);
+      } else if (mode === "layout") {
+        const load = async () => {
+          if (f.seed && f.ext === "pdf" && pdfs[f.id]) return Uint8Array.from(atob(pdfs[f.id]), c => c.charCodeAt(0));
+          const asset = f.original && await env.BUCKET.get(f.original);
+          need(asset, 404, "原文件不可用");
+          return new Uint8Array(await new Response(asset.body).arrayBuffer());
+        };
+        let layout;
+        try {
+          layout = await layoutPreview(env.BUCKET, f.original || ns + "/samples/" + f.id, f, load, url.searchParams.get("page"));
+        } catch (e) {
+          if (e.status) throw e;
+          need(false, 422, "当前文件无法生成排版预览");
+        }
+        if (layout.data) {
+          response = fileResp(layout.data, layout.mime, f.id + "-page");
+          if (layout.mime === "image/svg+xml")
+            response.headers.set("content-security-policy", "sandbox; default-src 'none'; img-src data:");
+        } else response = json(layout);
       } else if (f.previewKey) {
         const o = await env.BUCKET.get(f.previewKey);
         need(o, 404, "预览不可用");
